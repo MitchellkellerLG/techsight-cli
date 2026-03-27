@@ -247,10 +247,14 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
     """Run all signatures against collected evidence.
 
     Returns detections meeting the minimum confidence threshold.
+    Merges vectors from multiple signatures with the same tech name
+    (e.g., upstream + custom) before scoring.
     """
     signatures = get_signatures()
-    detections: list[Detection] = []
-    detected_names: set[str] = set()
+
+    # Collect all matches per technology name (merge upstream + custom)
+    tech_matches: dict[str, list[str]] = {}
+    tech_info: dict[str, TechSignature] = {}
 
     for sig in signatures:
         all_matches: list[str] = []
@@ -266,17 +270,30 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
         if not all_matches:
             continue
 
-        confidence = _calculate_confidence(all_matches)
+        if sig.name not in tech_matches:
+            tech_matches[sig.name] = []
+            tech_info[sig.name] = sig
+        tech_matches[sig.name].extend(all_matches)
+
+    # Score merged vectors and filter by confidence
+    detections: list[Detection] = []
+    detected_names: set[str] = set()
+
+    for name, vectors in tech_matches.items():
+        # Dedupe vectors
+        unique_vectors = list(dict.fromkeys(vectors))
+        confidence = _calculate_confidence(unique_vectors)
         if confidence >= min_confidence:
+            sig = tech_info[name]
             detections.append(Detection(
-                name=sig.name,
+                name=name,
                 category_ids=sig.categories,
                 confidence=confidence,
-                vectors=all_matches,
+                vectors=unique_vectors,
                 website=sig.website,
                 description=sig.description,
             ))
-            detected_names.add(sig.name)
+            detected_names.add(name)
 
     # Resolve implications — if A is detected and implies B, add B
     implied: list[Detection] = []

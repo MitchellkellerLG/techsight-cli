@@ -1,0 +1,134 @@
+{
+  "Next.js": {
+    "cats": [12, 18],
+    "scriptSrc": ["/_next/static/"],
+    "html": ["__NEXT_DATA__", "next-route-announcer"],
+    "headers": {"x-powered-by": "^Next\\.js"},
+    "website": "https://nextjs.org"
+  },
+  "Nuxt.js": {
+    "cats": [12, 18],
+    "scriptSrc": ["/_nuxt/"],
+    "html": ["__NUXT__", "nuxt-link", "data-v-"],
+    "headers": {"x-powered-by": "Nuxt"},
+    "website": "https://nuxt.com"
+  },
+  "Cloudflare": {
+    "cats": [31],
+    "headers": {"server": "cloudflare", "cf-ray": "", "cf-cache-status": ""},
+    "cookies": {"__cflb": "", "__cf_bm": "", "__cfduid": ""},
+    "dns": {"TXT": ["cloudflare-verify"]},
+    "website": "https://cloudflare.com"
+  },
+  "Vercel": {
+    "cats": [101],
+    "headers": {"server": "Vercel", "x-vercel-id": "", "x-vercel-cache": ""},
+    "scriptSrc": ["vercel-analytics", "vercel-scripts"],
+    "dns": {"TXT": ["vercel-verification="]},
+    "website": "https://vercel.com"
+  },
+  "WordPress": {
+    "cats": [1, 11],
+    "headers": {"x-powered-by": "WordPress", "link": "wp-json"},
+    "html": ["wp-content", "wp-includes", "wp-json"],
+    "meta": {"generator": "WordPress"},
+    "scriptSrc": ["wp-content/", "wp-includes/"],
+    "website": "https://wordpress.org"
+  },
+  "Shopify": {
+    "cats": [6],
+    "headers": {"x-shopid": "", "x-shopify-stage": "", "x-sorting-hat-shopid": ""},
+    "cookies": {"_shopify_s": "", "_shopify_y": "", "cart_sig": ""},
+    "scriptSrc": ["cdn\\.shopify\\.com"],
+    "html": ["Shopify\\.theme", "shopify-section"],
+    "meta": {"shopify-digital-wallet": ""},
+    "website": "https://shopify.com"
+  },
+  "Google Analytics": {
+    "cats": [10],
+    "scriptSrc": ["google-analytics\\.com/analytics", "googletagmanager\\.com/gtag", "google-analytics\\.com/ga\\.js"],
+    "html": ["GoogleAnalyticsObject", "gtag\\(", "ga\\('send"],
+    "website": "https://analytics.google.com"
+  },
+  "Google Tag Manager": {
+    "cats": [42],
+    "scriptSrc": ["googletagmanager\\.com/gtm\\.js"],
+    "html": ["GTM-[A-Z0-9]+"],
+    "website": "https://tagmanager.google.com"
+  },
+  "React": {
+    "cats": [12],
+    "html": ["data-reactroot", "data-reactid", "_reactRootContainer"],
+    "scriptSrc": ["react\\.production\\.min\\.js", "react-dom"],
+    "website": "https://reactjs.org"
+  },
+  "Tailwind CSS": {
+    "cats": [66],
+    "html": ["class=\"[^\"]*(?:flex|grid|bg-|text-|p-|m-|w-|h-|rounded|shadow)[^\"]*\""],
+    "website": "https://tailwindcss.com"
+  },
+  "Apollo.io": {
+    "cats": [32],
+    "scriptSrc": ["apollocdn\\.com", "app\\.apollo\\.io"],
+    "html": ["apollo-tracking"],
+    "website": "https://apollo.io"
+  },
+  "Intercom": {
+    "cats": [68, 84],
+    "scriptSrc": ["widget\\.intercom\\.io", "intercomcdn\\.com"],
+    "html": ["Intercom\\(", "intercom-container"],
+    "website": "https://intercom.com"
+  },
+  "Drift": {
+    "cats": [68, 84],
+    "scriptSrc": ["js\\.driftt?\\.com"],
+    "html": ["drift-frame", "drift-widget"],
+    "website": "https://drift.com"
+  },
+  "Stripe": {
+    "cats": [41],
+    "scriptSrc": ["js\\.stripe\\.com"],
+    "html": ["Stripe\\("],
+    "dns": {"TXT": ["stripe-verification="]},
+    "website": "https://stripe.com"
+  },
+  "Calendly": {
+    "cats": [77],
+    "scriptSrc": ["assets\\.calendly\\.com"],
+    "html": ["calendly-inline-widget", "calendly\\.com/"],
+    "website": "https://calendly.com"
+  },
+  "Cal.com": {
+    "cats": [77],
+    "scriptSrc": ["app\\.cal\\.com"],
+    "html": ["cal\\.com/"],
+    "website": "https://cal.com"
+  },
+  "Framer": {
+    "cats": [1],
+    "headers": {"server": "Framer"},
+    "scriptSrc": ["framerusercontent\\.com", "framer\\.com"],
+    "html": ["framer-"],
+    "website": "https://framer.com"
+  },
+  "Webflow": {
+    "cats": [1],
+    "headers": {"server": "Webflow"},
+    "scriptSrc": ["webflow\\.com"],
+    "html": ["w-webflow-badge", "wf-layout"],
+    "meta": {"generator": "Webflow"},
+    "website": "https://webflow.com"
+  },
+  "Supabase": {
+    "cats": [34],
+    "scriptSrc": ["supabase\\.co", "supabase\\.io"],
+    "html": ["supabase"],
+    "website": "https://supabase.com"
+  },
+  "Firebase": {
+    "cats": [34],
+    "scriptSrc": ["firebase\\.google\\.com", "firebaseapp\\.com", "firebaseio\\.com"],
+    "html": ["firebase"],
+    "website": "https://firebase.google.com"
+  }
+}
