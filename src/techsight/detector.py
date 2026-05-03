@@ -342,6 +342,32 @@ _INLINE_SCRIPT_FINGERPRINTS: list[tuple[re.Pattern[str], str, int]] = [
     (re.compile(r"bat\.bing\.com/bat\.js", re.I), "Microsoft Ads", 99),
     (re.compile(r"cdn\.clearbit\.com/v1/pk\.js", re.I), "Clearbit Reveal", 99),
     (re.compile(r"cdn\.rollout\.io/|window\._ro\s*=", re.I), "CloudBees Feature Management", 90),
+    # Analytics
+    (re.compile(r"plausible\.io/js/script", re.I), "Plausible Analytics", 99),
+    (re.compile(r"manus-analytics\.com/umami", re.I), "Umami Analytics", 99),
+    (re.compile(r"scripts\.simpleanalyticscdn\.com", re.I), "Simple Analytics", 99),
+    (re.compile(r"cdn\.amplitude\.com/libs/analytics-browser", re.I), "Amplitude", 99),
+    (re.compile(r"cdn\.mixpanel\.com/libs/mixpanel", re.I), "Mixpanel", 99),
+    (re.compile(r"window\.mixpanel\s*=\s*window\.mixpanel\s*\|\|", re.I), "Mixpanel", 95),
+    (re.compile(r"cdn\.posthog\.com/|window\.posthog\s*=", re.I), "PostHog", 99),
+    # Website builders / hosting
+    (re.compile(r"manuscdn\.com/", re.I), "Manus", 99),
+    (re.compile(r"manus-space-dispatcher", re.I), "Manus", 95),
+    # Email / CRM / newsletters
+    (re.compile(r"\.kit\.com/[a-f0-9]+/index\.js", re.I), "ConvertKit", 99),
+    (re.compile(r"convertkit\.com/", re.I), "ConvertKit", 95),
+    (re.compile(r"js\.beehiiv\.com/|embeds\.beehiiv\.com/", re.I), "Beehiiv", 99),
+    (re.compile(r"js\.substack\.com/", re.I), "Substack", 99),
+    (re.compile(r"js\.mailchimp\.com/|mc\.us[0-9]+\.list-manage\.com", re.I), "Mailchimp", 99),
+    # Tracking pixels / intent
+    (re.compile(r"p\.midbound\.click/", re.I), "Midbound", 99),
+    (re.compile(r"js\.qualified\.com/", re.I), "Qualified", 99),
+    (re.compile(r"tag\.g2crowd\.com/", re.I), "G2", 95),
+    (re.compile(r"cdn\.pendo\.io/agent/static/", re.I), "Pendo", 99),
+    (re.compile(r"window\.pendo\s*=\s*window\.pendo\s*\|\|", re.I), "Pendo", 95),
+    (re.compile(r"cdn\.reamaze\.com/assets/reamaze", re.I), "Reamaze", 99),
+    (re.compile(r"js\.hsforms\.net/", re.I), "HubSpot Forms", 99),
+    (re.compile(r"cdn\.jsdelivr\.net/gh/vierless/waitless", re.I), "Waitless", 95),
 ]
 
 

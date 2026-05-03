@@ -130,5 +130,38 @@
     "scriptSrc": ["firebase\\.google\\.com", "firebaseapp\\.com", "firebaseio\\.com"],
     "html": ["firebase"],
     "website": "https://firebase.google.com"
+  },
+  "Plausible Analytics": {
+    "cats": [10],
+    "scriptSrc": ["plausible\\.io/js/script"],
+    "website": "https://plausible.io"
+  },
+  "Manus": {
+    "cats": [1],
+    "scriptSrc": ["manuscdn\\.com/"],
+    "html": ["manus-space-dispatcher"],
+    "website": "https://manus.im"
+  },
+  "ConvertKit": {
+    "cats": [84],
+    "scriptSrc": ["\\.kit\\.com/[a-f0-9]+/index\\.js", "convertkit\\.com/"],
+    "dns": {"TXT": ["convertkit-site-verification="]},
+    "website": "https://kit.com"
+  },
+  "Beehiiv": {
+    "cats": [84],
+    "scriptSrc": ["js\\.beehiiv\\.com", "embeds\\.beehiiv\\.com"],
+    "website": "https://beehiiv.com"
+  },
+  "Midbound": {
+    "cats": [10],
+    "scriptSrc": ["midbound\\.click/"],
+    "website": "https://midbound.com"
+  },
+  "LinkedIn Insight Tag": {
+    "cats": [36],
+    "scriptSrc": ["snap\\.licdn\\.com/li\\.lms-analytics"],
+    "dns": {"TXT": ["linkedin-site-verification="]},
+    "website": "https://business.linkedin.com/marketing-solutions/insight-tag"
   }
 }
