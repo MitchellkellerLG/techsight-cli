@@ -22,19 +22,21 @@ def cli() -> None:
 @click.option("--min-confidence", "-c", default=95, help="Minimum confidence threshold (0-100)")
 @click.option("--skip-dns", is_flag=True, help="Skip DNS TXT lookups")
 @click.option("--skip-cert", is_flag=True, help="Skip TLS certificate check")
+@click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
 def scan(
     domain: str,
     json_output: bool,
     min_confidence: int,
     skip_dns: bool,
     skip_cert: bool,
+    skip_crt: bool,
 ) -> None:
     """Scan a single domain for technologies."""
     from techsight.collector import collect
     from techsight.detector import detect
     from techsight.output import render_json, render_table
 
-    evidence = collect(domain, skip_dns=skip_dns, skip_cert=skip_cert)
+    evidence = collect(domain, skip_dns=skip_dns, skip_cert=skip_cert, skip_crt=skip_crt)
 
     if evidence.error:
         click.echo(f"Warning: {evidence.error}", err=True)
@@ -52,18 +54,20 @@ def scan(
 @click.option("--min-confidence", "-c", default=95, help="Minimum confidence threshold (0-100)")
 @click.option("--max-workers", "-w", default=50, help="Concurrent requests")
 @click.option("--skip-dns", is_flag=True, help="Skip DNS TXT lookups")
+@click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
 def batch(
     domains: tuple[str, ...],
     min_confidence: int,
     max_workers: int,
     skip_dns: bool,
+    skip_crt: bool,
 ) -> None:
     """Scan multiple domains. Output JSON to stdout."""
     from techsight.collector import collect_batch
     from techsight.detector import detect
     from techsight.output import category_name
 
-    evidences = collect_batch(list(domains), max_workers=max_workers, skip_dns=skip_dns)
+    evidences = collect_batch(list(domains), max_workers=max_workers, skip_dns=skip_dns, skip_crt=skip_crt)
 
     results = []
     for ev in evidences:
@@ -94,6 +98,7 @@ def batch(
 @click.option("--min-confidence", "-c", default=95, help="Minimum confidence threshold")
 @click.option("--max-workers", "-w", default=50, help="Concurrent requests")
 @click.option("--skip-dns", is_flag=True, help="Skip DNS TXT lookups")
+@click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
 @click.option("--overwrite", is_flag=True, help="Overwrite existing tech stack values")
 def enrich(
     input_path: str,
@@ -103,6 +108,7 @@ def enrich(
     min_confidence: int,
     max_workers: int,
     skip_dns: bool,
+    skip_crt: bool,
     overwrite: bool,
 ) -> None:
     """Enrich a CSV by filling missing Tech Stack from domain scanning."""
@@ -116,6 +122,7 @@ def enrich(
         min_confidence=min_confidence,
         max_workers=max_workers,
         skip_dns=skip_dns,
+        skip_crt=skip_crt,
         overwrite=overwrite,
     )
 

@@ -32,6 +32,15 @@ class Evidence:
     # TLS
     cert_issuer: str = ""
 
+    # crt.sh subdomain enumeration
+    subdomains: list[str] = field(default_factory=list)
+
+    # DNS CNAME targets for interesting subdomains (subdomain → cname_target)
+    cname_map: dict[str, str] = field(default_factory=dict)
+
+    # robots.txt body
+    robots_txt: str = ""
+
     # Error
     error: str | None = None
 
@@ -149,6 +158,146 @@ def _match_cert(sig: TechSignature, evidence: Evidence) -> list[str]:
     return matches
 
 
+# CNAME suffix → (tech_name, confidence) from crt.sh subdomain fingerprinting.
+# Confidence reflects how uniquely the subdomain prefix implies the technology.
+_CNAME_FINGERPRINTS: list[tuple[re.Pattern[str], str, int]] = [
+    (re.compile(r"\.salesforce\.com$", re.I), "Salesforce", 95),
+    (re.compile(r"\.force\.com$", re.I), "Salesforce", 95),
+    (re.compile(r"\.zendesk\.com$", re.I), "Zendesk", 95),
+    (re.compile(r"\.hubspot\.com$", re.I), "HubSpot", 95),
+    (re.compile(r"\.hubspot\.net$", re.I), "HubSpot", 95),
+    (re.compile(r"\.intercom\.io$", re.I), "Intercom", 95),
+    (re.compile(r"\.intercomcdn\.com$", re.I), "Intercom", 90),
+    (re.compile(r"\.marketo\.net$", re.I), "Marketo", 95),
+    (re.compile(r"\.mktocdn\.com$", re.I), "Marketo", 90),
+    (re.compile(r"\.pardot\.com$", re.I), "Pardot", 95),
+    (re.compile(r"\.eloqua\.com$", re.I), "Eloqua", 95),
+    (re.compile(r"\.exacttarget\.com$", re.I), "Salesforce Marketing Cloud", 90),
+    (re.compile(r"\.mktoweb\.com$", re.I), "Marketo", 90),
+    (re.compile(r"\.drift\.com$", re.I), "Drift", 95),
+    (re.compile(r"\.driftt\.com$", re.I), "Drift", 90),
+    (re.compile(r"\.chilipiper\.com$", re.I), "Chili Piper", 95),
+    (re.compile(r"\.outreach\.io$", re.I), "Outreach", 95),
+    (re.compile(r"\.salesloft\.com$", re.I), "SalesLoft", 95),
+    (re.compile(r"\.gong\.io$", re.I), "Gong", 95),
+    (re.compile(r"\.chorus\.ai$", re.I), "Chorus", 95),
+    (re.compile(r"\.calendly\.com$", re.I), "Calendly", 95),
+    (re.compile(r"\.apollo\.io$", re.I), "Apollo", 95),
+    (re.compile(r"\.zoominfo\.com$", re.I), "ZoomInfo", 95),
+    (re.compile(r"\.clearbit\.com$", re.I), "Clearbit", 95),
+    (re.compile(r"\.6sense\.com$", re.I), "6sense", 95),
+    (re.compile(r"\.demandbase\.com$", re.I), "Demandbase", 95),
+    (re.compile(r"\.rollworks\.com$", re.I), "RollWorks", 95),
+    (re.compile(r"\.wpengine\.com$", re.I), "WP Engine", 95),
+    (re.compile(r"\.kinsta\.cloud$", re.I), "Kinsta", 95),
+    (re.compile(r"\.fastly\.net$", re.I), "Fastly", 90),
+]
+
+# Common subdomain prefixes that indicate a technology is in use
+_SUBDOMAIN_PREFIXES: list[tuple[str, str, int]] = [
+    ("help.", "Zendesk", 70),
+    ("support.", "Zendesk", 60),
+    ("go.", "Marketo", 60),
+    ("pages.", "HubSpot", 65),
+    ("info.", "HubSpot", 55),
+    ("blog.", "HubSpot", 50),
+    ("app.", "Intercom", 50),
+    ("chat.", "Intercom", 55),
+]
+
+
+def _match_subdomains_direct(evidence: Evidence) -> list[tuple[str, str, int]]:
+    """Match crt.sh subdomains + DNS CNAMEs against fingerprints.
+
+    Priority: resolved CNAME target (high confidence) > subdomain prefix (low confidence).
+    Returns list of (tech_name, vector_label, confidence).
+    """
+    found: dict[str, tuple[str, int]] = {}  # tech_name → (vector, max_confidence)
+
+    # Phase 1: resolved CNAME targets (high confidence — actual DNS confirmation)
+    for subdomain, cname_target in evidence.cname_map.items():
+        cname_lower = cname_target.lower()
+        for pattern, tech, confidence in _CNAME_FINGERPRINTS:
+            if pattern.search(cname_lower):
+                label = f"crt:cname:{subdomain[:50]}→{cname_target[:40]}"
+                existing = found.get(tech)
+                if existing is None or confidence > existing[1]:
+                    found[tech] = (label, confidence)
+
+    # Phase 2: subdomain name patterns from crt.sh (lower confidence — no DNS resolution)
+    for subdomain in evidence.subdomains:
+        subdomain_lower = subdomain.lower()
+
+        # CNAME fingerprint on subdomain name itself (e.g., company.zendesk.com in certs)
+        for pattern, tech, confidence in _CNAME_FINGERPRINTS:
+            if pattern.search(subdomain_lower):
+                label = f"crt:{subdomain[:60]}"
+                existing = found.get(tech)
+                if existing is None or confidence > existing[1]:
+                    found[tech] = (label, confidence)
+
+        # Prefix hints (lower confidence — generic prefixes like help./ support.)
+        for prefix, tech, confidence in _SUBDOMAIN_PREFIXES:
+            # Don't downgrade if we already have a higher-confidence signal
+            if subdomain_lower.startswith(prefix):
+                label = f"crt:{subdomain[:60]}"
+                existing = found.get(tech)
+                if existing is None or confidence > existing[1]:
+                    found[tech] = (label, confidence)
+
+    return [(tech, vec, conf) for tech, (vec, conf) in found.items()]
+
+
+# robots.txt path/directive patterns → (tech_name, confidence)
+_ROBOTS_FINGERPRINTS: list[tuple[re.Pattern[str], str, int]] = [
+    # CMS platforms
+    (re.compile(r"Disallow:\s*/wp-admin", re.I), "WordPress", 95),
+    (re.compile(r"Disallow:\s*/wp-content", re.I), "WordPress", 90),
+    (re.compile(r"Sitemap:.*wp-sitemap", re.I), "WordPress", 95),
+    (re.compile(r"Disallow:\s*/user/login", re.I), "Drupal", 90),
+    (re.compile(r"Disallow:\s*/sites/default", re.I), "Drupal", 90),
+    (re.compile(r"Disallow:\s*/ghost/", re.I), "Ghost", 95),
+    (re.compile(r"Sitemap:.*ghost", re.I), "Ghost", 90),
+    (re.compile(r"Disallow:\s*/umbraco/", re.I), "Umbraco", 95),
+    (re.compile(r"Disallow:\s*/typo3/", re.I), "TYPO3", 95),
+    (re.compile(r"Disallow:\s*/craft/", re.I), "Craft CMS", 95),
+    # E-commerce
+    (re.compile(r"Disallow:\s*/cart$", re.I), "Shopify", 80),
+    (re.compile(r"Sitemap:.*shopify", re.I), "Shopify", 95),
+    (re.compile(r"Disallow:\s*/checkout/", re.I), "Shopify", 70),
+    (re.compile(r"Sitemap:.*bigcommerce", re.I), "BigCommerce", 95),
+    (re.compile(r"Disallow:\s*/magento/", re.I), "Magento", 95),
+    # Marketing / CRM
+    (re.compile(r"Disallow:\s*/hs-search-results", re.I), "HubSpot", 95),
+    (re.compile(r"Sitemap:.*hubspot", re.I), "HubSpot", 90),
+    (re.compile(r"Disallow:\s*/mkto-", re.I), "Marketo", 90),
+    (re.compile(r"Disallow:\s*/pardot/", re.I), "Pardot", 95),
+    # Analytics / Tag managers
+    (re.compile(r"Disallow:\s*/gtm\.js", re.I), "Google Tag Manager", 90),
+]
+
+
+def _match_robots_direct(evidence: Evidence) -> list[tuple[str, str, int]]:
+    """Match robots.txt content against fingerprint patterns.
+
+    Returns list of (tech_name, vector_label, confidence).
+    """
+    if not evidence.robots_txt:
+        return []
+
+    found: dict[str, tuple[str, int]] = {}
+
+    for pattern, tech, confidence in _ROBOTS_FINGERPRINTS:
+        m = pattern.search(evidence.robots_txt)
+        if m:
+            label = f"robots:{m.group(0)[:50]}"
+            existing = found.get(tech)
+            if existing is None or confidence > existing[1]:
+                found[tech] = (label, confidence)
+
+    return [(tech, vec, conf) for tech, (vec, conf) in found.items()]
+
+
 # Confidence tiers based on how many INDEPENDENT vector types matched.
 # Two independent signals confirming the same tech = high confidence.
 # A single signal (even a strong one) = not enough for 95%+.
@@ -164,7 +313,9 @@ VECTOR_GROUP: dict[str, str] = {
     "header": "server",
     "cookie": "server",
     "cert": "server",
-    "dns": "dns",       # DNS is its own group — fully independent
+    "dns": "dns",        # DNS is its own group — fully independent
+    "crt": "crt",        # crt.sh subdomains / CNAME resolution
+    "robots": "robots",  # robots.txt — independent page-level signal
     "scriptSrc": "page",
     "meta": "page",
     "html": "page",
@@ -216,8 +367,15 @@ def _calculate_confidence(vectors: list[str]) -> int:
 
     # Single vector type, single group
     if n_types == 1 and n_groups == 1:
-        # Multiple matches of same type bumps it slightly
         count = list(types.values())[0]
+        # HTML-only: regex against minified JS causes coincidental substring matches.
+        # Keep confidence well below typical lower threshold (70%) to prevent false positives.
+        if "html" in types:
+            if count >= 3:
+                return 50
+            if count >= 2:
+                return 40
+            return 25
         if count >= 3:
             return 55
         if count >= 2:
@@ -315,5 +473,28 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
                 break
 
     detections.extend(implied)
+
+    def _inject_direct_hits(
+        hits: list[tuple[str, str, int]],
+    ) -> None:
+        for tech_name, vector_label, hit_confidence in hits:
+            if tech_name not in detected_names and hit_confidence >= min_confidence:
+                detections.append(Detection(
+                    name=tech_name,
+                    category_ids=[],
+                    confidence=hit_confidence,
+                    vectors=[vector_label],
+                ))
+                detected_names.add(tech_name)
+            elif tech_name in detected_names:
+                for det in detections:
+                    if det.name == tech_name and vector_label not in det.vectors:
+                        det.vectors.append(vector_label)
+                        det.confidence = min(99, max(det.confidence, hit_confidence))
+                        break
+
+    _inject_direct_hits(_match_subdomains_direct(evidence))
+    _inject_direct_hits(_match_robots_direct(evidence))
+
     detections.sort(key=lambda d: (-d.confidence, d.name))
     return detections
