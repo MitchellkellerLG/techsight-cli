@@ -53,6 +53,135 @@ def category_name(cat_id: int) -> str:
     return CATEGORIES.get(cat_id, f"Cat-{cat_id}")
 
 
+# Maps WebAppAnalyzer category IDs → concise group label for AI-parseable output.
+# Groups reflect what matters for GTM/sales intelligence.
+_CAT_TO_GROUP: dict[int, str] = {
+    # CMS / site builder
+    1: "cms", 11: "cms", 50: "cms", 105: "cms", 20: "cms",
+    # Hosting / infra
+    9: "hosting", 22: "hosting", 28: "hosting", 37: "hosting",
+    101: "hosting", 31: "cdn", 23: "cache",
+    # Framework / language
+    12: "framework", 18: "framework", 26: "framework", 27: "language",
+    # Analytics
+    10: "analytics", 60: "analytics", 100: "analytics",
+    # Advertising / retargeting
+    36: "advertising", 59: "retargeting", 64: "segmentation",
+    # Marketing automation / email
+    32: "marketing_automation", 57: "email", 84: "email",
+    # CRM / sales
+    53: "crm", 87: "customer_success",
+    # Intent / identity
+    67: "dmp", 71: "cdp", 97: "cdp",
+    # Chat / support
+    68: "chat", 4: "support", 13: "support",
+    # Appointment / booking
+    77: "scheduling", 65: "scheduling",
+    # Tag management
+    42: "tag_manager",
+    # A/B / personalisation
+    56: "ab_testing", 58: "personalisation", 63: "feature_flags",
+    # Consent / compliance
+    61: "consent", 72: "consent", 102: "consent",
+    # Payments / ecommerce
+    41: "payments", 6: "ecommerce", 69: "ecommerce", 81: "ecommerce",
+    # Forms / surveys
+    82: "forms", 66: "forms",
+    # SEO
+    54: "seo",
+    # User onboarding / product
+    79: "product_analytics", 80: "reviews", 88: "referral",
+    # Security / ID
+    16: "security", 74: "iam", 83: "iam",
+    # Dev / infra
+    44: "ci_cd", 47: "dev_tools", 34: "database",
+}
+
+# Tech names that belong to a specific group regardless of category (overrides/supplements)
+_NAME_TO_GROUP: dict[str, str] = {
+    "RB2B": "intent",
+    "ZoomInfo WebSights": "intent",
+    "6sense": "intent",
+    "Demandbase": "intent",
+    "Clearbit Reveal": "intent",
+    "Clearbit": "intent",
+    "Apollo": "crm",
+    "LinkedIn Insight Tag": "advertising",
+    "LinkedIn Ads": "advertising",
+    "Facebook Pixel": "advertising",
+    "Microsoft Ads": "advertising",
+    "Twitter/X Ads": "advertising",
+    "Google Tag Manager": "tag_manager",
+    "Segment": "cdp",
+    "Heap": "product_analytics",
+    "Hotjar": "product_analytics",
+    "Pendo": "product_analytics",
+    "PostHog": "product_analytics",
+    "Amplitude": "product_analytics",
+    "Mixpanel": "product_analytics",
+    "Intercom": "chat",
+    "Drift": "chat",
+    "Chili Piper": "scheduling",
+    "Calendly": "scheduling",
+    "Cal.com": "scheduling",
+    "HubSpot": "marketing_automation",
+    "HubSpot CMS Hub": "cms",
+    "HubSpot Forms": "forms",
+    "Marketo": "marketing_automation",
+    "Marketo Munchkin": "marketing_automation",
+    "Pardot": "marketing_automation",
+    "Salesforce": "crm",
+    "Salesforce Marketing Cloud": "marketing_automation",
+    "Outreach": "sales_engagement",
+    "SalesLoft": "sales_engagement",
+    "Gong": "sales_engagement",
+    "Chorus": "sales_engagement",
+    "Plausible Analytics": "analytics",
+    "Umami Analytics": "analytics",
+    "Simple Analytics": "analytics",
+    "ConvertKit": "email",
+    "Beehiiv": "email",
+    "Mailchimp": "email",
+    "Klaviyo": "email",
+    "SendGrid": "email",
+    "Zendesk": "support",
+    "OneTrust": "consent",
+    "CookieYes": "consent",
+    "Cloudflare": "cdn",
+    "Fastly": "cdn",
+    "Vercel": "hosting",
+    "WP Engine": "hosting",
+    "Kinsta": "hosting",
+    "Manus": "cms",
+    "Webflow": "cms",
+    "Framer": "cms",
+    "WordPress": "cms",
+    "Shopify": "ecommerce",
+    "Stripe": "payments",
+    "Next.js": "framework",
+    "React": "framework",
+    "Midbound": "analytics",
+    "Tolt": "referral",
+    "Poptin": "forms",
+}
+
+
+def _group_detections(detections: list[Detection]) -> dict[str, list[str]]:
+    """Group detected technologies by functional role."""
+    groups: dict[str, list[str]] = {}
+    for d in detections:
+        group = _NAME_TO_GROUP.get(d.name)
+        if not group:
+            for cat_id in d.category_ids:
+                group = _CAT_TO_GROUP.get(cat_id)
+                if group:
+                    break
+        if not group:
+            group = "other"
+        groups.setdefault(group, []).append(d.name)
+    return {k: v for k, v in sorted(groups.items())}
+
+
 def render_table(domain: str, detections: list[Detection], console: Console | None = None) -> None:
     """Render detections as a Rich table to stderr."""
     c = console or Console(stderr=True)
@@ -81,9 +210,13 @@ def render_json(domain: str, detections: list[Detection]) -> None:
     result = {
         "domain": domain,
         "count": len(detections),
+        "stacks": _group_detections(detections),
         "technologies": [
             {
                 "name": d.name,
+                "group": _NAME_TO_GROUP.get(d.name) or next(
+                    (_CAT_TO_GROUP[c] for c in d.category_ids if c in _CAT_TO_GROUP), "other"
+                ),
                 "categories": [category_name(c) for c in d.category_ids],
                 "confidence": d.confidence,
                 "vectors": d.vectors,
