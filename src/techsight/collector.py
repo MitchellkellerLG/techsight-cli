@@ -56,6 +56,65 @@ def _parse_cookies(response: httpx.Response) -> dict[str, str]:
     return cookies
 
 
+def _parse_internal_links(html: str, domain: str) -> list[str]:
+    """Extract unique internal paths from homepage HTML. Returns paths like /demo."""
+    seen: set[str] = set()
+    paths: list[str] = []
+    for match in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\']', html, re.IGNORECASE):
+        href = match.group(1).strip()
+        if href.startswith("/") and not href.startswith("//"):
+            path = href.split("?")[0].split("#")[0].rstrip("/")
+            if path and path not in seen:
+                seen.add(path)
+                paths.append(path)
+        elif href.startswith(f"https://{domain}") or href.startswith(f"http://{domain}"):
+            from urllib.parse import urlparse
+            parsed = urlparse(href)
+            path = parsed.path.rstrip("/")
+            if path and path not in seen:
+                seen.add(path)
+                paths.append(path)
+    return paths
+
+
+def _fetch_deep_pages(domain: str, homepage_html: str, max_pages: int = 10) -> tuple[str, list[str]]:
+    """Fetch up to max_pages internal subpages discovered from homepage links.
+
+    Returns (extra_html, extra_script_sources) merged from all subpages.
+    Gracefully skips pages that error or timeout.
+    """
+    paths = _parse_internal_links(homepage_html, domain)[:max_pages]
+    if not paths:
+        return "", []
+
+    def _fetch_one(path: str) -> tuple[str, list[str]]:
+        try:
+            with httpx.Client(
+                timeout=HTTP_TIMEOUT,
+                follow_redirects=True,
+                verify=False,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
+            ) as client:
+                resp = client.get(f"https://{domain}{path}")
+                if resp.status_code < 400:
+                    page_html = resp.text[:MAX_BODY_BYTES]
+                    return page_html, _parse_script_sources(page_html)
+        except Exception:
+            pass
+        return "", []
+
+    extra_html_parts: list[str] = []
+    extra_scripts: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=min(len(paths), 10)) as pool:
+        for page_html, page_scripts in pool.map(_fetch_one, paths):
+            if page_html:
+                extra_html_parts.append(page_html)
+            extra_scripts.extend(page_scripts)
+
+    return "\n".join(extra_html_parts), extra_scripts
+
+
 def _fetch_http(domain: str) -> Evidence:
     """Fetch HTTP response and extract evidence."""
     evidence = Evidence(domain=domain)
@@ -231,6 +290,7 @@ def collect(
     skip_dns: bool = False,
     skip_cert: bool = False,
     skip_crt: bool = False,
+    deep: bool = False,
 ) -> Evidence:
     """Collect all evidence for a domain.
 
@@ -274,6 +334,17 @@ def collect(
         except Exception:
             pass
 
+    # Phase 3: deep page scanning — fetch internal subpages, merge signals
+    if deep and evidence.html and not evidence.error:
+        try:
+            extra_html, extra_scripts = _fetch_deep_pages(domain, evidence.html)
+            if extra_html:
+                evidence.html += "\n" + extra_html
+            if extra_scripts:
+                evidence.script_sources = list(dict.fromkeys(evidence.script_sources + extra_scripts))
+        except Exception:
+            pass
+
     return evidence
 
 
@@ -283,13 +354,14 @@ def collect_batch(
     skip_dns: bool = False,
     skip_cert: bool = False,
     skip_crt: bool = False,
+    deep: bool = False,
 ) -> list[Evidence]:
     """Collect evidence for multiple domains concurrently."""
     results: list[Evidence] = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_map = {
-            pool.submit(collect, d, skip_dns, skip_cert, skip_crt): d for d in domains
+            pool.submit(collect, d, skip_dns, skip_cert, skip_crt, deep): d for d in domains
         }
         for fut in as_completed(future_map):
             results.append(fut.result())

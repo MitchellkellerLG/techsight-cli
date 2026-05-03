@@ -46,6 +46,7 @@ def enrich_csv(
     skip_dns: bool = False,
     skip_crt: bool = False,
     overwrite: bool = False,
+    deep: bool = False,
 ) -> dict[str, int]:
     """Enrich a CSV file by filling missing Tech Stack values.
 
@@ -120,7 +121,7 @@ def enrich_csv(
         chunk_size = max_workers * 2
         for start in range(0, len(unique_domains), chunk_size):
             chunk = unique_domains[start : start + chunk_size]
-            evidences = collect_batch(chunk, max_workers=max_workers, skip_dns=skip_dns, skip_crt=skip_crt)
+            evidences = collect_batch(chunk, max_workers=max_workers, skip_dns=skip_dns, skip_crt=skip_crt, deep=deep)
 
             for ev in evidences:
                 detections = detect(ev, min_confidence=min_confidence)

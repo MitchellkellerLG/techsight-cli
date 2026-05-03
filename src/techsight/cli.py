@@ -23,6 +23,7 @@ def cli() -> None:
 @click.option("--skip-dns", is_flag=True, help="Skip DNS TXT lookups")
 @click.option("--skip-cert", is_flag=True, help="Skip TLS certificate check")
 @click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
+@click.option("--deep", is_flag=True, help="Scan up to 10 internal subpages (finds GTM tools on /demo, /pricing, etc.)")
 def scan(
     domain: str,
     json_output: bool,
@@ -30,13 +31,14 @@ def scan(
     skip_dns: bool,
     skip_cert: bool,
     skip_crt: bool,
+    deep: bool,
 ) -> None:
     """Scan a single domain for technologies."""
     from techsight.collector import collect
     from techsight.detector import detect
     from techsight.output import render_json, render_table
 
-    evidence = collect(domain, skip_dns=skip_dns, skip_cert=skip_cert, skip_crt=skip_crt)
+    evidence = collect(domain, skip_dns=skip_dns, skip_cert=skip_cert, skip_crt=skip_crt, deep=deep)
 
     if evidence.error:
         click.echo(f"Warning: {evidence.error}", err=True)
@@ -55,19 +57,21 @@ def scan(
 @click.option("--max-workers", "-w", default=50, help="Concurrent requests")
 @click.option("--skip-dns", is_flag=True, help="Skip DNS TXT lookups")
 @click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
+@click.option("--deep", is_flag=True, help="Scan up to 10 internal subpages per domain")
 def batch(
     domains: tuple[str, ...],
     min_confidence: int,
     max_workers: int,
     skip_dns: bool,
     skip_crt: bool,
+    deep: bool,
 ) -> None:
     """Scan multiple domains. Output JSON to stdout."""
     from techsight.collector import collect_batch
     from techsight.detector import detect
     from techsight.output import category_name
 
-    evidences = collect_batch(list(domains), max_workers=max_workers, skip_dns=skip_dns, skip_crt=skip_crt)
+    evidences = collect_batch(list(domains), max_workers=max_workers, skip_dns=skip_dns, skip_crt=skip_crt, deep=deep)
 
     results = []
     for ev in evidences:
@@ -100,6 +104,7 @@ def batch(
 @click.option("--skip-dns", is_flag=True, help="Skip DNS TXT lookups")
 @click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
 @click.option("--overwrite", is_flag=True, help="Overwrite existing tech stack values")
+@click.option("--deep", is_flag=True, help="Scan up to 10 internal subpages per domain")
 def enrich(
     input_path: str,
     output_path: str | None,
@@ -110,6 +115,7 @@ def enrich(
     skip_dns: bool,
     skip_crt: bool,
     overwrite: bool,
+    deep: bool,
 ) -> None:
     """Enrich a CSV by filling missing Tech Stack from domain scanning."""
     from techsight.enricher import enrich_csv
@@ -124,6 +130,7 @@ def enrich(
         skip_dns=skip_dns,
         skip_crt=skip_crt,
         overwrite=overwrite,
+        deep=deep,
     )
 
 
