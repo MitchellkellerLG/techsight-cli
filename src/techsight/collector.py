@@ -88,13 +88,14 @@ def _fetch_deep_pages(domain: str, homepage_html: str, max_pages: int = 10) -> t
     if not paths:
         return "", []
 
-    DEEP_PAGE_TIMEOUT = 8  # per-page timeout, tighter than homepage
-    DEEP_WALL_CLOCK = 30  # bail on the whole deep scan after 30s
+    # Tight per-field timeouts so slow CF sites fail fast, not hang
+    DEEP_TIMEOUT = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
+    DEEP_WALL_CLOCK = 25  # wall-clock cap for the whole deep batch
 
     def _fetch_one(path: str) -> tuple[str, list[str]]:
         try:
             with httpx.Client(
-                timeout=DEEP_PAGE_TIMEOUT,
+                timeout=DEEP_TIMEOUT,
                 follow_redirects=True,
                 verify=False,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
@@ -109,13 +110,12 @@ def _fetch_deep_pages(domain: str, homepage_html: str, max_pages: int = 10) -> t
 
     extra_html_parts: list[str] = []
     extra_scripts: list[str] = []
-    deadline = time.monotonic() + DEEP_WALL_CLOCK
 
-    with ThreadPoolExecutor(max_workers=min(len(paths), 10)) as pool:
+    # shutdown(wait=False) so we don't block on slow threads after the wall-clock expires
+    pool = ThreadPoolExecutor(max_workers=min(len(paths), 10))
+    try:
         future_map = {pool.submit(_fetch_one, p): p for p in paths}
         for fut in as_completed(future_map, timeout=DEEP_WALL_CLOCK):
-            if time.monotonic() > deadline:
-                break
             try:
                 page_html, page_scripts = fut.result()
                 if page_html:
@@ -123,6 +123,10 @@ def _fetch_deep_pages(domain: str, homepage_html: str, max_pages: int = 10) -> t
                 extra_scripts.extend(page_scripts)
             except Exception:
                 pass
+    except TimeoutError:
+        pass  # wall-clock hit — take what we have
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     return "\n".join(extra_html_parts), extra_scripts
 
@@ -346,8 +350,9 @@ def collect(
         except Exception:
             pass
 
-    # Phase 3: deep page scanning — fetch internal subpages, merge signals
-    if deep and evidence.html and not evidence.error:
+    # Phase 3: deep page scanning — skip if Cloudflare-protected (blocks subpages anyway)
+    cf_protected = bool(evidence.headers.get("cf-ray"))
+    if deep and evidence.html and not evidence.error and not cf_protected:
         try:
             extra_html, extra_scripts = _fetch_deep_pages(domain, evidence.html)
             if extra_html:
