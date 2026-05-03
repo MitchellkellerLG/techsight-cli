@@ -298,6 +298,76 @@ def _match_robots_direct(evidence: Evidence) -> list[tuple[str, str, int]]:
     return [(tech, vec, conf) for tech, (vec, conf) in found.items()]
 
 
+# Inline script fingerprints — unique CDN URLs or JS initialization patterns
+# embedded in HTML <script> blocks (not external <script src="">).
+# These are high-confidence because the patterns are specific enough to be unambiguous
+# (a unique CloudFront distribution, a proprietary window.* init pattern, etc.)
+_INLINE_SCRIPT_FINGERPRINTS: list[tuple[re.Pattern[str], str, int]] = [
+    # Visitor identification / intent
+    (re.compile(r"ddwl4m2hdecbv\.cloudfront\.net", re.I), "RB2B", 99),
+    (re.compile(r"window\.reb2b\s*=\s*window\.reb2b", re.I), "RB2B", 95),
+    (re.compile(r"cdn\.popt\.in/pixel\.js", re.I), "Poptin", 95),
+    (re.compile(r"ws\.zoominfo\.com/pixel", re.I), "ZoomInfo WebSights", 99),
+    (re.compile(r"snap\.licdn\.com/li\.lms-analytics", re.I), "LinkedIn Insight Tag", 99),
+    (re.compile(r"snap\.licdn\.com/li\.lms-analytics|linkedin\.com/insight\.min\.js", re.I), "LinkedIn Insight Tag", 99),
+    (re.compile(r"static\.klaviyo\.com/onsite/js/klaviyo\.js", re.I), "Klaviyo", 99),
+    (re.compile(r"window\._klOnsite\s*=", re.I), "Klaviyo", 95),
+    (re.compile(r"js\.hsforms\.net/forms/embed", re.I), "HubSpot Forms", 95),
+    (re.compile(r"js\.hs-scripts\.com/", re.I), "HubSpot", 99),
+    (re.compile(r"js\.hscta\.net/", re.I), "HubSpot", 95),
+    (re.compile(r"static\.parastorage\.com|window\.__wixSiteProperties", re.I), "Wix", 90),
+    (re.compile(r"cdn\.segment\.com/analytics\.js", re.I), "Segment", 99),
+    (re.compile(r"window\.analytics\s*=\s*window\.analytics\s*\|\|.*segment", re.I), "Segment", 95),
+    (re.compile(r"cdn\.heapanalytics\.com/js/heap", re.I), "Heap", 99),
+    (re.compile(r"window\.heap\s*=\s*window\.heap\s*\|\|", re.I), "Heap", 95),
+    (re.compile(r"static\.hotjar\.com/c/hotjar-", re.I), "Hotjar", 99),
+    (re.compile(r"window\.hj\s*=\s*window\.hj\s*\|\|", re.I), "Hotjar", 95),
+    (re.compile(r"widget\.intercom\.io/widget/", re.I), "Intercom", 99),
+    (re.compile(r"window\.Intercom\s*=\s*window\.Intercom\s*\|\|", re.I), "Intercom", 95),
+    (re.compile(r"js\.driftt\.com/include/", re.I), "Drift", 99),
+    (re.compile(r"window\.drift\s*=\s*window\.drift\s*\|\|", re.I), "Drift", 95),
+    (re.compile(r"mktdplp\.com/munchkin\.js|mktdplp\.com", re.I), "Marketo Munchkin", 99),
+    (re.compile(r"assets\.adobedtm\.com/", re.I), "Adobe Experience Platform", 95),
+    (re.compile(r"cdn\.cookielaw\.org/scripttemplates/otSDKStub\.js", re.I), "OneTrust", 99),
+    (re.compile(r"cdn-cookieyes\.com/client_data/", re.I), "CookieYes", 99),
+    (re.compile(r"js\.chilipiper\.com/", re.I), "Chili Piper", 99),
+    (re.compile(r"cdn\.tolt\.io/tolt\.js", re.I), "Tolt", 99),
+    (re.compile(r"js\.apollo\.io/", re.I), "Apollo", 99),
+    (re.compile(r"tag\.demandbase\.com/", re.I), "Demandbase", 99),
+    (re.compile(r"cdn\.6sense\.com/", re.I), "6sense", 99),
+    (re.compile(r"px\.ads\.linkedin\.com/collect", re.I), "LinkedIn Ads", 95),
+    (re.compile(r"connect\.facebook\.net/[^/]+/fbevents\.js", re.I), "Facebook Pixel", 99),
+    (re.compile(r"window\.fbq\s*=\s*window\.fbq\s*\|\|", re.I), "Facebook Pixel", 95),
+    (re.compile(r"static\.ads-twitter\.com/uwt\.js", re.I), "Twitter/X Ads", 99),
+    (re.compile(r"bat\.bing\.com/bat\.js", re.I), "Microsoft Ads", 99),
+    (re.compile(r"cdn\.clearbit\.com/v1/pk\.js", re.I), "Clearbit Reveal", 99),
+    (re.compile(r"cdn\.rollout\.io/|window\._ro\s*=", re.I), "CloudBees Feature Management", 90),
+]
+
+
+def _match_inline_scripts_direct(evidence: Evidence) -> list[tuple[str, str, int]]:
+    """Match HTML body against inline script fingerprints.
+
+    Targets specific CDN URLs and JS init patterns unique enough to be high-confidence
+    without requiring multi-signal confirmation.
+    Returns list of (tech_name, vector_label, confidence).
+    """
+    if not evidence.html:
+        return []
+
+    found: dict[str, tuple[str, int]] = {}
+
+    for pattern, tech, confidence in _INLINE_SCRIPT_FINGERPRINTS:
+        m = pattern.search(evidence.html)
+        if m:
+            label = f"inline:{m.group(0)[:60]}"
+            existing = found.get(tech)
+            if existing is None or confidence > existing[1]:
+                found[tech] = (label, confidence)
+
+    return [(tech, vec, conf) for tech, (vec, conf) in found.items()]
+
+
 # Confidence tiers based on how many INDEPENDENT vector types matched.
 # Two independent signals confirming the same tech = high confidence.
 # A single signal (even a strong one) = not enough for 95%+.
@@ -316,6 +386,7 @@ VECTOR_GROUP: dict[str, str] = {
     "dns": "dns",        # DNS is its own group — fully independent
     "crt": "crt",        # crt.sh subdomains / CNAME resolution
     "robots": "robots",  # robots.txt — independent page-level signal
+    "inline": "inline",  # unique inline CDN URLs / JS init patterns (high-specificity)
     "scriptSrc": "page",
     "meta": "page",
     "html": "page",
@@ -495,6 +566,7 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
 
     _inject_direct_hits(_match_subdomains_direct(evidence))
     _inject_direct_hits(_match_robots_direct(evidence))
+    _inject_direct_hits(_match_inline_scripts_direct(evidence))
 
     detections.sort(key=lambda d: (-d.confidence, d.name))
     return detections
