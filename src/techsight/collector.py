@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import ssl
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import dns.resolver
@@ -87,10 +88,13 @@ def _fetch_deep_pages(domain: str, homepage_html: str, max_pages: int = 10) -> t
     if not paths:
         return "", []
 
+    DEEP_PAGE_TIMEOUT = 8  # per-page timeout, tighter than homepage
+    DEEP_WALL_CLOCK = 30  # bail on the whole deep scan after 30s
+
     def _fetch_one(path: str) -> tuple[str, list[str]]:
         try:
             with httpx.Client(
-                timeout=HTTP_TIMEOUT,
+                timeout=DEEP_PAGE_TIMEOUT,
                 follow_redirects=True,
                 verify=False,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
@@ -105,12 +109,20 @@ def _fetch_deep_pages(domain: str, homepage_html: str, max_pages: int = 10) -> t
 
     extra_html_parts: list[str] = []
     extra_scripts: list[str] = []
+    deadline = time.monotonic() + DEEP_WALL_CLOCK
 
     with ThreadPoolExecutor(max_workers=min(len(paths), 10)) as pool:
-        for page_html, page_scripts in pool.map(_fetch_one, paths):
-            if page_html:
-                extra_html_parts.append(page_html)
-            extra_scripts.extend(page_scripts)
+        future_map = {pool.submit(_fetch_one, p): p for p in paths}
+        for fut in as_completed(future_map, timeout=DEEP_WALL_CLOCK):
+            if time.monotonic() > deadline:
+                break
+            try:
+                page_html, page_scripts = fut.result()
+                if page_html:
+                    extra_html_parts.append(page_html)
+                extra_scripts.extend(page_scripts)
+            except Exception:
+                pass
 
     return "\n".join(extra_html_parts), extra_scripts
 
