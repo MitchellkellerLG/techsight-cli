@@ -68,7 +68,10 @@ Any HTML match corroborated by a second signal type (e.g. scriptSrc) immediately
 
 ## Performance
 
-- **50 concurrent requests** by default (`--max-workers`)
+- **200 concurrent requests** by default (`--max-workers`) — async engine, no thread overhead
+- Architecture: asyncio + httpx.AsyncClient + semaphore. Eliminates nested ThreadPoolExecutors.
+- Benchmark (500 domains, lite mode): ~1440 dom/min @ w=50, ~1600 dom/min @ w=200. No degradation at high worker counts.
+- Hit rate drops above w=300 (DNS rate limiting). w=200 is the sweet spot.
 - Deduplicates domains before scanning — 1000 rows with 300 unique domains = 300 fetches
 - Processes in chunks of `max_workers * 2` to control memory
 - `--skip-dns` cuts latency when DNS TXT lookup is slow or unnecessary

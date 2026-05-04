@@ -42,7 +42,7 @@ def enrich_csv(
     domain_col: str | None = None,
     tech_col: str | None = None,
     min_confidence: int = 95,
-    max_workers: int = 50,
+    max_workers: int = 200,
     skip_dns: bool = False,
     skip_cert: bool = False,
     skip_crt: bool = False,

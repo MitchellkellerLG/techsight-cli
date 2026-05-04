@@ -1,30 +1,31 @@
-"""Evidence collection — fetches HTTP, DNS, and TLS data for a domain."""
+"""Evidence collection — async HTTP, DNS, and TLS data for a domain."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 import ssl
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
-import dns.resolver
+import dns.asyncresolver
 import httpx
 
 from techsight.detector import Evidence
 
 
 MAX_BODY_BYTES = 2 * 1024 * 1024  # 2MB
-HTTP_TIMEOUT = 15  # seconds
+HTTP_TIMEOUT = 15
 DNS_TIMEOUT = 5
+
+# Small pool for blocking cert fetches only
+_CERT_POOL = ThreadPoolExecutor(max_workers=10)
 
 
 def _parse_script_sources(html: str) -> list[str]:
-    """Extract all script src attributes from HTML."""
     return re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
 
 
 def _parse_meta_tags(html: str) -> dict[str, str]:
-    """Extract meta tag name/property -> content mappings."""
     tags: dict[str, str] = {}
     for match in re.finditer(
         r'<meta[^>]+(?:name|property)=["\']([^"\']+)["\'][^>]+content=["\']([^"\']*)["\']',
@@ -32,7 +33,6 @@ def _parse_meta_tags(html: str) -> dict[str, str]:
         re.IGNORECASE,
     ):
         tags[match.group(1).lower()] = match.group(2)
-    # Also match reverse order (content before name)
     for match in re.finditer(
         r'<meta[^>]+content=["\']([^"\']*)["\'][^>]+(?:name|property)=["\']([^"\']+)["\']',
         html,
@@ -43,11 +43,9 @@ def _parse_meta_tags(html: str) -> dict[str, str]:
 
 
 def _parse_cookies(response: httpx.Response) -> dict[str, str]:
-    """Extract cookies from response headers."""
     cookies: dict[str, str] = {}
     for cookie in response.cookies.jar:
         cookies[cookie.name] = cookie.value or ""
-    # Also parse raw Set-Cookie headers for patterns
     for val in response.headers.get_list("set-cookie"):
         parts = val.split(";")[0].split("=", 1)
         if len(parts) == 2:
@@ -58,7 +56,6 @@ def _parse_cookies(response: httpx.Response) -> dict[str, str]:
 
 
 def _parse_internal_links(html: str, domain: str) -> list[str]:
-    """Extract unique internal paths from homepage HTML. Returns paths like /demo."""
     seen: set[str] = set()
     paths: list[str] = []
     for match in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\']', html, re.IGNORECASE):
@@ -78,100 +75,40 @@ def _parse_internal_links(html: str, domain: str) -> list[str]:
     return paths
 
 
-def _fetch_deep_pages(domain: str, homepage_html: str, max_pages: int = 10) -> tuple[str, list[str]]:
-    """Fetch up to max_pages internal subpages discovered from homepage links.
-
-    Returns (extra_html, extra_script_sources) merged from all subpages.
-    Gracefully skips pages that error or timeout.
-    """
-    paths = _parse_internal_links(homepage_html, domain)[:max_pages]
-    if not paths:
-        return "", []
-
-    # Tight per-field timeouts so slow CF sites fail fast, not hang
-    DEEP_TIMEOUT = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
-    DEEP_WALL_CLOCK = 25  # wall-clock cap for the whole deep batch
-
-    def _fetch_one(path: str) -> tuple[str, list[str]]:
-        try:
-            with httpx.Client(
-                timeout=DEEP_TIMEOUT,
-                follow_redirects=True,
-                verify=False,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
-            ) as client:
-                resp = client.get(f"https://{domain}{path}")
-                if resp.status_code < 400:
-                    page_html = resp.text[:MAX_BODY_BYTES]
-                    return page_html, _parse_script_sources(page_html)
-        except Exception:
-            pass
-        return "", []
-
-    extra_html_parts: list[str] = []
-    extra_scripts: list[str] = []
-
-    # shutdown(wait=False) so we don't block on slow threads after the wall-clock expires
-    pool = ThreadPoolExecutor(max_workers=min(len(paths), 10))
-    try:
-        future_map = {pool.submit(_fetch_one, p): p for p in paths}
-        for fut in as_completed(future_map, timeout=DEEP_WALL_CLOCK):
-            try:
-                page_html, page_scripts = fut.result()
-                if page_html:
-                    extra_html_parts.append(page_html)
-                extra_scripts.extend(page_scripts)
-            except Exception:
-                pass
-    except TimeoutError:
-        pass  # wall-clock hit — take what we have
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
-
-    return "\n".join(extra_html_parts), extra_scripts
-
-
-def _fetch_http(domain: str) -> Evidence:
-    """Fetch HTTP response and extract evidence."""
+async def _fetch_http_async(domain: str, client: httpx.AsyncClient) -> Evidence:
     evidence = Evidence(domain=domain)
-
     try:
-        with httpx.Client(
-            timeout=HTTP_TIMEOUT,
-            follow_redirects=True,
-            verify=False,
-            limits=httpx.Limits(max_connections=10),
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
-        ) as client:
-            url = f"https://{domain}"
-            response = client.get(url)
-
-            evidence.url = str(response.url)
-            evidence.status_code = response.status_code
-            evidence.headers = {k.lower(): v for k, v in response.headers.items()}
-            evidence.cookies = _parse_cookies(response)
-
-            if response.status_code < 400:
-                html = response.text[:MAX_BODY_BYTES]
-                evidence.html = html
-                evidence.script_sources = _parse_script_sources(html)
-                evidence.meta_tags = _parse_meta_tags(html)
-
-    except httpx.HTTPError as e:
-        evidence.error = str(e)
+        response = await client.get(f"https://{domain}", timeout=HTTP_TIMEOUT)
+        evidence.url = str(response.url)
+        evidence.status_code = response.status_code
+        evidence.headers = {k.lower(): v for k, v in response.headers.items()}
+        evidence.cookies = _parse_cookies(response)
+        if response.status_code < 400:
+            html = response.text[:MAX_BODY_BYTES]
+            evidence.html = html
+            evidence.script_sources = _parse_script_sources(html)
+            evidence.meta_tags = _parse_meta_tags(html)
     except Exception as e:
         evidence.error = str(e)
-
     return evidence
 
 
-def _fetch_dns_txt(domain: str) -> list[str]:
-    """Fetch DNS TXT records for a domain."""
+async def _fetch_robots_txt_async(domain: str, client: httpx.AsyncClient) -> str:
     try:
-        resolver = dns.resolver.Resolver()
+        resp = await client.get(f"https://{domain}/robots.txt", timeout=8)
+        if resp.status_code == 200 and "text" in resp.headers.get("content-type", "text"):
+            return resp.text[:50_000]
+    except Exception:
+        pass
+    return ""
+
+
+async def _fetch_dns_txt_async(domain: str) -> list[str]:
+    try:
+        resolver = dns.asyncresolver.Resolver()
         resolver.timeout = DNS_TIMEOUT
         resolver.lifetime = DNS_TIMEOUT
-        answers = resolver.resolve(domain, "TXT")
+        answers = await resolver.resolve(domain, "TXT")
         records = []
         for rdata in answers:
             for txt in rdata.strings:
@@ -181,97 +118,47 @@ def _fetch_dns_txt(domain: str) -> list[str]:
         return []
 
 
-def _fetch_robots_txt(domain: str) -> str:
-    """Fetch and return robots.txt content."""
+def _fetch_cert_issuer_sync(domain: str) -> str:
     try:
-        with httpx.Client(
-            timeout=8,
-            follow_redirects=True,
-            verify=False,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
-        ) as client:
-            resp = client.get(f"https://{domain}/robots.txt")
-            if resp.status_code == 200 and "text" in resp.headers.get("content-type", "text"):
-                return resp.text[:50_000]
+        ctx = ssl.create_default_context()
+        with ctx.wrap_socket(
+            __import__("socket").create_connection((domain, 443), timeout=5),
+            server_hostname=domain,
+        ) as sock:
+            cert = sock.getpeercert()
+            if cert:
+                for field_set in cert.get("issuer", ()):
+                    for key, val in field_set:
+                        if key == "organizationName":
+                            return val
     except Exception:
         pass
     return ""
 
 
-# Subdomain prefixes worth resolving CNAME for — these commonly indicate SaaS tools
-_CNAME_RESOLVE_PREFIXES = frozenset([
-    "help", "support", "go", "pages", "info", "blog", "chat", "app",
-    "docs", "status", "community", "kb", "knowledge", "portal", "login",
-    "mail", "email", "crm", "meetings", "book", "calendar",
-])
+async def _fetch_cert_issuer_async(domain: str) -> str:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_CERT_POOL, _fetch_cert_issuer_sync, domain)
 
 
-def _resolve_cnames(subdomains: list[str], max_lookups: int = 25) -> dict[str, str]:
-    """Resolve DNS CNAME records for interesting subdomains.
-
-    Only resolves subdomains with prefixes that commonly map to SaaS tools,
-    to keep lookup count manageable. Returns {subdomain: cname_target}.
-    """
-    resolver = dns.resolver.Resolver()
-    resolver.timeout = 3
-    resolver.lifetime = 3
-
-    candidates: list[str] = []
-    for subdomain in subdomains:
-        prefix = subdomain.split(".")[0].lower()
-        if prefix in _CNAME_RESOLVE_PREFIXES:
-            candidates.append(subdomain)
-        if len(candidates) >= max_lookups:
-            break
-
-    cname_map: dict[str, str] = {}
-
-    def _resolve_one(subdomain: str) -> tuple[str, str]:
-        try:
-            answers = resolver.resolve(subdomain, "CNAME")
-            target = str(answers[0].target).rstrip(".")
-            return subdomain, target
-        except Exception:
-            return subdomain, ""
-
-    if not candidates:
-        return {}
-
-    with ThreadPoolExecutor(max_workers=min(len(candidates), 15)) as pool:
-        for sub, target in pool.map(_resolve_one, candidates):
-            if target:
-                cname_map[sub] = target
-
-    return cname_map
-
-
-def _fetch_crt_sh(domain: str) -> list[str]:
-    """Fetch subdomains from crt.sh certificate transparency logs.
-
-    Returns unique subdomain names (CN/SAN entries) for the domain.
-    Used to fingerprint technologies via CNAME prefix patterns
-    (e.g., help.company.com → likely Zendesk).
-    Limits to 200 most recent entries to avoid timeout on large domains.
-    """
+async def _fetch_crt_sh_async(domain: str) -> list[str]:
     try:
-        with httpx.Client(
+        async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=12.0, write=5.0, pool=5.0),
             follow_redirects=True,
         ) as client:
-            resp = client.get(
+            resp = await client.get(
                 "https://crt.sh/",
                 params={"q": f"%.{domain}", "output": "json", "limit": "200"},
                 headers={"Accept": "application/json"},
             )
             if resp.status_code != 200:
                 return []
-            entries = resp.json()
             seen: set[str] = set()
             subdomains: list[str] = []
-            for entry in entries:
+            for entry in resp.json():
                 for field in ("common_name", "name_value"):
-                    val = entry.get(field, "")
-                    for name in val.split("\n"):
+                    for name in entry.get(field, "").split("\n"):
                         name = name.strip().lstrip("*.")
                         if name and name not in seen and not name.startswith("@"):
                             seen.add(name)
@@ -281,80 +168,139 @@ def _fetch_crt_sh(domain: str) -> list[str]:
         return []
 
 
-def _fetch_cert_issuer(domain: str) -> str:
-    """Get SSL certificate issuer organization."""
-    try:
-        ctx = ssl.create_default_context()
-        with ctx.wrap_socket(
-            __import__("socket").create_connection((domain, 443), timeout=5),
-            server_hostname=domain,
-        ) as sock:
-            cert = sock.getpeercert()
-            if cert:
-                issuer = cert.get("issuer", ())
-                for field_set in issuer:
-                    for key, val in field_set:
-                        if key == "organizationName":
-                            return val
-    except Exception:
-        pass
-    return ""
+_CNAME_RESOLVE_PREFIXES = frozenset([
+    "help", "support", "go", "pages", "info", "blog", "chat", "app",
+    "docs", "status", "community", "kb", "knowledge", "portal", "login",
+    "mail", "email", "crm", "meetings", "book", "calendar",
+])
 
 
-def collect(
+async def _resolve_cnames_async(subdomains: list[str], max_lookups: int = 25) -> dict[str, str]:
+    resolver = dns.asyncresolver.Resolver()
+    resolver.timeout = 3
+    resolver.lifetime = 3
+
+    candidates = [
+        s for s in subdomains if s.split(".")[0].lower() in _CNAME_RESOLVE_PREFIXES
+    ][:max_lookups]
+
+    if not candidates:
+        return {}
+
+    async def _resolve_one(subdomain: str) -> tuple[str, str]:
+        try:
+            answers = await resolver.resolve(subdomain, "CNAME")
+            return subdomain, str(answers[0].target).rstrip(".")
+        except Exception:
+            return subdomain, ""
+
+    results = await asyncio.gather(*[_resolve_one(c) for c in candidates])
+    return {sub: target for sub, target in results if target}
+
+
+async def _fetch_deep_pages_async(
     domain: str,
+    homepage_html: str,
+    client: httpx.AsyncClient,
+    max_pages: int = 10,
+) -> tuple[str, list[str]]:
+    paths = _parse_internal_links(homepage_html, domain)[:max_pages]
+    if not paths:
+        return "", []
+
+    DEEP_TIMEOUT = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
+
+    async def _fetch_one(path: str) -> tuple[str, list[str]]:
+        try:
+            resp = await client.get(
+                f"https://{domain}{path}",
+                timeout=DEEP_TIMEOUT,
+            )
+            if resp.status_code < 400:
+                page_html = resp.text[:MAX_BODY_BYTES]
+                return page_html, _parse_script_sources(page_html)
+        except Exception:
+            pass
+        return "", []
+
+    results = await asyncio.gather(*[_fetch_one(p) for p in paths], return_exceptions=True)
+
+    extra_html_parts: list[str] = []
+    extra_scripts: list[str] = []
+    for r in results:
+        if isinstance(r, Exception):
+            continue
+        page_html, page_scripts = r
+        if page_html:
+            extra_html_parts.append(page_html)
+        extra_scripts.extend(page_scripts)
+
+    return "\n".join(extra_html_parts), extra_scripts
+
+
+async def _collect_async(
+    domain: str,
+    client: httpx.AsyncClient,
     skip_dns: bool = False,
     skip_cert: bool = False,
     skip_crt: bool = False,
     deep: bool = False,
 ) -> Evidence:
-    """Collect all evidence for a domain.
+    """Collect all evidence for a single domain (async)."""
+    coros: list = [
+        _fetch_http_async(domain, client),
+        _fetch_robots_txt_async(domain, client),
+    ]
+    slots = ["http", "robots"]
 
-    Phase 1 (parallel): HTTP main page, robots.txt, DNS TXT, TLS cert, crt.sh subdomains.
-    Phase 2 (after crt.sh): DNS CNAME resolution for interesting subdomains.
-    """
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        http_fut = pool.submit(_fetch_http, domain)
-        robots_fut = pool.submit(_fetch_robots_txt, domain)
-        futures: dict[str, object] = {}
-        if not skip_dns:
-            futures["dns"] = pool.submit(_fetch_dns_txt, domain)
-        if not skip_cert:
-            futures["cert"] = pool.submit(_fetch_cert_issuer, domain)
-        if not skip_crt:
-            futures["crt"] = pool.submit(_fetch_crt_sh, domain)
+    if not skip_dns:
+        coros.append(_fetch_dns_txt_async(domain))
+        slots.append("dns")
+    if not skip_cert:
+        coros.append(_fetch_cert_issuer_async(domain))
+        slots.append("cert")
+    if not skip_crt:
+        coros.append(_fetch_crt_sh_async(domain))
+        slots.append("crt")
 
-        evidence = http_fut.result()
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    slot_map = dict(zip(slots, results))
 
-        try:
-            evidence.robots_txt = robots_fut.result(timeout=10)
-        except Exception:
-            pass
+    http_result = slot_map["http"]
+    evidence: Evidence = (
+        http_result
+        if not isinstance(http_result, Exception)
+        else Evidence(domain=domain, error=str(http_result))
+    )
 
-        for key, fut in futures.items():
-            try:
-                result = fut.result(timeout=15)  # type: ignore[union-attr]
-                if key == "dns":
-                    evidence.dns_txt = result
-                elif key == "cert":
-                    evidence.cert_issuer = result
-                elif key == "crt":
-                    evidence.subdomains = result
-            except Exception:
-                pass
+    robots = slot_map.get("robots")
+    if robots and not isinstance(robots, Exception):
+        evidence.robots_txt = robots
 
-    # Phase 2: resolve CNAMEs for interesting subdomains found via crt.sh
+    dns_result = slot_map.get("dns")
+    if dns_result and not isinstance(dns_result, Exception):
+        evidence.dns_txt = dns_result
+
+    cert = slot_map.get("cert")
+    if cert and not isinstance(cert, Exception):
+        evidence.cert_issuer = cert
+
+    crt = slot_map.get("crt")
+    if crt and not isinstance(crt, Exception):
+        evidence.subdomains = crt
+
+    # Phase 2: CNAME resolution
     if evidence.subdomains and not skip_crt:
         try:
-            evidence.cname_map = _resolve_cnames(evidence.subdomains)
+            evidence.cname_map = await _resolve_cnames_async(evidence.subdomains)
         except Exception:
             pass
 
-    # Phase 3: deep page scanning — skip if Cloudflare-protected (blocks subpages anyway)
+    # Phase 3: deep page scanning — skip Cloudflare-protected (blocks subpages)
     cf_protected = bool(evidence.headers.get("cf-ray"))
     if deep and evidence.html and not evidence.error and not cf_protected:
         try:
-            extra_html, extra_scripts = _fetch_deep_pages(domain, evidence.html)
+            extra_html, extra_scripts = await _fetch_deep_pages_async(domain, evidence.html, client)
             if extra_html:
                 evidence.html += "\n" + extra_html
             if extra_scripts:
@@ -363,6 +309,56 @@ def collect(
             pass
 
     return evidence
+
+
+async def _collect_batch_async(
+    domains: list[str],
+    max_workers: int = 50,
+    skip_dns: bool = False,
+    skip_cert: bool = False,
+    skip_crt: bool = False,
+    deep: bool = False,
+) -> list[Evidence]:
+    """Collect evidence for multiple domains concurrently (async)."""
+    sem = asyncio.Semaphore(max_workers)
+
+    async with httpx.AsyncClient(
+        verify=False,
+        follow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
+        limits=httpx.Limits(max_connections=None, max_keepalive_connections=max_workers),
+    ) as client:
+        async def _bounded(domain: str) -> Evidence:
+            async with sem:
+                return await _collect_async(domain, client, skip_dns, skip_cert, skip_crt, deep)
+
+        results = await asyncio.gather(*[_bounded(d) for d in domains], return_exceptions=True)
+
+    return [
+        r if not isinstance(r, Exception) else Evidence(domain=domains[i], error=str(r))
+        for i, r in enumerate(results)
+    ]
+
+
+# ── Public sync API — signatures unchanged, no callers need updating ──────────
+
+def collect(
+    domain: str,
+    skip_dns: bool = False,
+    skip_cert: bool = False,
+    skip_crt: bool = False,
+    deep: bool = False,
+) -> Evidence:
+    """Collect all evidence for a domain."""
+    async def _run() -> Evidence:
+        async with httpx.AsyncClient(
+            verify=False,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
+        ) as client:
+            return await _collect_async(domain, client, skip_dns, skip_cert, skip_crt, deep)
+
+    return asyncio.run(_run())
 
 
 def collect_batch(
@@ -374,13 +370,6 @@ def collect_batch(
     deep: bool = False,
 ) -> list[Evidence]:
     """Collect evidence for multiple domains concurrently."""
-    results: list[Evidence] = []
-
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_map = {
-            pool.submit(collect, d, skip_dns, skip_cert, skip_crt, deep): d for d in domains
-        }
-        for fut in as_completed(future_map):
-            results.append(fut.result())
-
-    return results
+    return asyncio.run(
+        _collect_batch_async(domains, max_workers, skip_dns, skip_cert, skip_crt, deep)
+    )
