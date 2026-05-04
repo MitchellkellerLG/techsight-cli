@@ -44,6 +44,7 @@ def enrich_csv(
     min_confidence: int = 95,
     max_workers: int = 50,
     skip_dns: bool = False,
+    skip_cert: bool = False,
     skip_crt: bool = False,
     overwrite: bool = False,
     deep: bool = False,
@@ -108,6 +109,7 @@ def enrich_csv(
     # Collect evidence in batches
     domain_results: dict[str, str] = {}
 
+    mode_label = "deep" if deep else ("lite" if (skip_crt and skip_cert) else "standard")
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -115,13 +117,13 @@ def enrich_csv(
         MofNCompleteColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task("Scanning", total=len(unique_domains))
+        task = progress.add_task(f"Enriching [{mode_label}]", total=len(unique_domains))
 
         # Process in chunks to avoid memory issues
         chunk_size = max_workers * 2
         for start in range(0, len(unique_domains), chunk_size):
             chunk = unique_domains[start : start + chunk_size]
-            evidences = collect_batch(chunk, max_workers=max_workers, skip_dns=skip_dns, skip_crt=skip_crt, deep=deep)
+            evidences = collect_batch(chunk, max_workers=max_workers, skip_dns=skip_dns, skip_cert=skip_cert, skip_crt=skip_crt, deep=deep)
 
             for ev in evidences:
                 detections = detect(ev, min_confidence=min_confidence)

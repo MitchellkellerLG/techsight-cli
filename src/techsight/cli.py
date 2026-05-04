@@ -4,10 +4,27 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 
 import click
 
 from techsight import __version__
+
+_MODE_HELP = "lite: homepage+DNS only, fast (~0.15s/domain). deep: all vectors + 10 subpages (~0.35s/domain)."
+
+
+def _apply_mode(mode: str | None, skip_dns: bool, skip_cert: bool, skip_crt: bool, deep: bool) -> tuple[bool, bool, bool, bool]:
+    """Apply mode preset over individual skip flags. Returns (skip_dns, skip_cert, skip_crt, deep)."""
+    if mode == "lite":
+        skip_crt = True
+        skip_cert = True
+        deep = False
+    elif mode == "deep":
+        skip_crt = False
+        skip_cert = False
+        skip_dns = False
+        deep = True
+    return skip_dns, skip_cert, skip_crt, deep
 
 
 @click.group()
@@ -24,6 +41,7 @@ def cli() -> None:
 @click.option("--skip-cert", is_flag=True, help="Skip TLS certificate check")
 @click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
 @click.option("--deep", is_flag=True, help="Scan up to 10 internal subpages (finds GTM tools on /demo, /pricing, etc.)")
+@click.option("--mode", type=click.Choice(["lite", "deep"]), default=None, help=_MODE_HELP)
 def scan(
     domain: str,
     json_output: bool,
@@ -32,12 +50,14 @@ def scan(
     skip_cert: bool,
     skip_crt: bool,
     deep: bool,
+    mode: str | None,
 ) -> None:
     """Scan a single domain for technologies."""
     from techsight.collector import collect
     from techsight.detector import detect
     from techsight.output import render_json, render_table
 
+    skip_dns, skip_cert, skip_crt, deep = _apply_mode(mode, skip_dns, skip_cert, skip_crt, deep)
     evidence = collect(domain, skip_dns=skip_dns, skip_cert=skip_cert, skip_crt=skip_crt, deep=deep)
 
     if evidence.error:
@@ -58,6 +78,7 @@ def scan(
 @click.option("--skip-dns", is_flag=True, help="Skip DNS TXT lookups")
 @click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
 @click.option("--deep", is_flag=True, help="Scan up to 10 internal subpages per domain")
+@click.option("--mode", type=click.Choice(["lite", "deep"]), default=None, help=_MODE_HELP)
 def batch(
     domains: tuple[str, ...],
     min_confidence: int,
@@ -65,13 +86,15 @@ def batch(
     skip_dns: bool,
     skip_crt: bool,
     deep: bool,
+    mode: str | None,
 ) -> None:
     """Scan multiple domains. Output JSON to stdout."""
     from techsight.collector import collect_batch
     from techsight.detector import detect
     from techsight.output import category_name
 
-    evidences = collect_batch(list(domains), max_workers=max_workers, skip_dns=skip_dns, skip_crt=skip_crt, deep=deep)
+    skip_dns, skip_cert, skip_crt, deep = _apply_mode(mode, False, False, skip_crt, deep)
+    evidences = collect_batch(list(domains), max_workers=max_workers, skip_dns=skip_dns, skip_cert=skip_cert, skip_crt=skip_crt, deep=deep)
 
     results = []
     for ev in evidences:
@@ -105,6 +128,7 @@ def batch(
 @click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
 @click.option("--overwrite", is_flag=True, help="Overwrite existing tech stack values")
 @click.option("--deep", is_flag=True, help="Scan up to 10 internal subpages per domain")
+@click.option("--mode", type=click.Choice(["lite", "deep"]), default=None, help=_MODE_HELP)
 def enrich(
     input_path: str,
     output_path: str | None,
@@ -116,10 +140,12 @@ def enrich(
     skip_crt: bool,
     overwrite: bool,
     deep: bool,
+    mode: str | None,
 ) -> None:
     """Enrich a CSV by filling missing Tech Stack from domain scanning."""
     from techsight.enricher import enrich_csv
 
+    skip_dns, skip_cert, skip_crt, deep = _apply_mode(mode, skip_dns, False, skip_crt, deep)
     enrich_csv(
         input_path=input_path,
         output_path=output_path,
@@ -128,6 +154,7 @@ def enrich(
         min_confidence=min_confidence,
         max_workers=max_workers,
         skip_dns=skip_dns,
+        skip_cert=skip_cert,
         skip_crt=skip_crt,
         overwrite=overwrite,
         deep=deep,
@@ -177,3 +204,113 @@ def stats() -> None:
     click.echo(f"\nTop 15 categories:")
     for cat, count in cat_counts.most_common(15):
         click.echo(f"  {cat:30s} {count:5d}")
+
+
+@cli.command()
+@click.option("--input", "-i", "input_path", required=True, help="Input CSV file")
+@click.option("--sample", default=100, help="Number of domains to sample for benchmarking")
+@click.option("--workers", "workers_str", default="50,100,150,200", help="Comma-separated worker counts to test")
+@click.option("--modes", "modes_str", default="lite,deep", help="Comma-separated modes to test (lite, deep)")
+@click.option("--min-confidence", "-c", default=95, help="Minimum confidence threshold")
+def benchmark(
+    input_path: str,
+    sample: int,
+    workers_str: str,
+    modes_str: str,
+    min_confidence: int,
+) -> None:
+    """Benchmark scan performance across modes and worker counts."""
+    import csv
+    from pathlib import Path
+    from rich.console import Console
+    from rich.table import Table
+    from techsight.collector import collect_batch
+    from techsight.detector import detect
+    from techsight.enricher import DOMAIN_COLUMNS, _find_column, _clean_domain
+
+    console = Console()
+    inp = Path(input_path)
+
+    if not inp.exists():
+        console.print(f"[red]File not found: {input_path}[/red]")
+        raise SystemExit(1)
+
+    # Parse worker counts and modes
+    worker_counts = [int(w.strip()) for w in workers_str.split(",") if w.strip()]
+    modes = [m.strip() for m in modes_str.split(",") if m.strip()]
+
+    # Read CSV and extract domains
+    with open(inp, encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            console.print("[red]Empty CSV or no headers[/red]")
+            raise SystemExit(1)
+        headers = list(reader.fieldnames)
+        rows = list(reader)
+
+    d_col = _find_column(headers, DOMAIN_COLUMNS)
+    if not d_col:
+        console.print(f"[red]No domain column found. Headers: {headers}[/red]")
+        console.print("[dim]Supported column names: domain, website, company domain, url[/dim]")
+        raise SystemExit(1)
+
+    # Deduplicate and sample
+    seen: set[str] = set()
+    domains: list[str] = []
+    for row in rows:
+        d = _clean_domain(row.get(d_col, ""))
+        if d and d not in seen:
+            seen.add(d)
+            domains.append(d)
+        if len(domains) >= sample:
+            break
+
+    console.print(f"[bold]Benchmarking {len(domains)} domains — {len(modes)} modes × {len(worker_counts)} worker counts[/bold]\n")
+
+    table = Table(title="TechSight Benchmark Results", show_lines=True)
+    table.add_column("Mode", style="cyan")
+    table.add_column("Workers", justify="right")
+    table.add_column("Time (s)", justify="right")
+    table.add_column("Domains/min", justify="right", style="green")
+    table.add_column("Hit Rate", justify="right", style="yellow")
+
+    for mode in modes:
+        # Translate mode to skip flags
+        if mode == "lite":
+            skip_dns, skip_cert, skip_crt, deep = False, True, True, False
+        elif mode == "deep":
+            skip_dns, skip_cert, skip_crt, deep = False, False, False, True
+        else:
+            console.print(f"[yellow]Unknown mode '{mode}', skipping[/yellow]")
+            continue
+
+        for workers in worker_counts:
+            console.print(f"[dim]Running mode={mode} workers={workers}...[/dim]")
+            t0 = time.perf_counter()
+            evidences = collect_batch(
+                domains,
+                max_workers=workers,
+                skip_dns=skip_dns,
+                skip_cert=skip_cert,
+                skip_crt=skip_crt,
+                deep=deep,
+            )
+            elapsed = time.perf_counter() - t0
+
+            hits = 0
+            for ev in evidences:
+                detections = detect(ev, min_confidence=min_confidence)
+                if detections:
+                    hits += 1
+
+            domains_per_min = (len(domains) / elapsed) * 60 if elapsed > 0 else 0
+            hit_rate = (hits / len(domains) * 100) if domains else 0
+
+            table.add_row(
+                mode,
+                str(workers),
+                f"{elapsed:.1f}s",
+                f"{domains_per_min:.0f}",
+                f"{hit_rate:.1f}%",
+            )
+            console.print(table)
