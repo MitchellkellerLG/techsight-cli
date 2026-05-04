@@ -369,6 +369,12 @@ _INLINE_SCRIPT_FINGERPRINTS: list[tuple[re.Pattern[str], str, int]] = [
     (re.compile(r"cdn\.reamaze\.com/assets/reamaze", re.I), "Reamaze", 99),
     (re.compile(r"js\.hsforms\.net/", re.I), "HubSpot Forms", 99),
     (re.compile(r"cdn\.jsdelivr\.net/gh/vierless/waitless", re.I), "Waitless", 95),
+    # Scheduling
+    (re.compile(r"assets\.calendly\.com/", re.I), "Calendly", 99),
+    (re.compile(r"calendly\.initPopupWidget\s*\(", re.I), "Calendly", 95),
+    (re.compile(r'href=["\']https://calendly\.com/[^"\']{5,}["\']', re.I), "Calendly", 90),
+    (re.compile(r"assets\.cal\.com/|cal\.com/embed", re.I), "Cal.com", 99),
+    (re.compile(r'href=["\']https://app\.cal\.com/[^"\']{5,}["\']', re.I), "Cal.com", 90),
 ]
 
 
@@ -588,7 +594,8 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
                 for det in detections:
                     if det.name == tech_name and vector_label not in det.vectors:
                         det.vectors.append(vector_label)
-                        det.confidence = min(99, max(det.confidence, hit_confidence))
+                        recalculated = _calculate_confidence(det.vectors)
+                        det.confidence = min(99, max(recalculated, hit_confidence))
                         break
 
     _inject_direct_hits(_match_subdomains_direct(evidence))

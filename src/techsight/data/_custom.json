@@ -163,5 +163,11 @@
     "scriptSrc": ["snap\\.licdn\\.com/li\\.lms-analytics"],
     "dns": {"TXT": ["linkedin-site-verification="]},
     "website": "https://business.linkedin.com/marketing-solutions/insight-tag"
+  },
+  "TidyCal": {
+    "cats": [77],
+    "scriptSrc": ["asset\\.tidycal\\.com"],
+    "html": ["data-tidycal-path", "tidycal\\.com/"],
+    "website": "https://tidycal.com"
   }
 }
