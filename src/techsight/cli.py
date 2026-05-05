@@ -65,10 +65,13 @@ def scan(
 
     detections = detect(evidence, min_confidence=min_confidence)
 
+    from techsight.output import _filter_subdomains
+    interesting = _filter_subdomains(evidence.subdomains, domain)
+
     if json_output:
-        render_json(domain, detections)
+        render_json(domain, detections, subdomains=interesting)
     else:
-        render_table(domain, detections)
+        render_table(domain, detections, subdomains=interesting)
 
 
 @cli.command()

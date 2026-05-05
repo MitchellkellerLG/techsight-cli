@@ -169,5 +169,35 @@
     "scriptSrc": ["asset\\.tidycal\\.com"],
     "html": ["data-tidycal-path", "tidycal\\.com/"],
     "website": "https://tidycal.com"
+  },
+  "Salesforce": {
+    "cats": [32],
+    "dns": {"TXT": ["_spf\\.salesforce\\.com"]},
+    "website": "https://salesforce.com"
+  },
+  "Pardot": {
+    "cats": [32],
+    "dns": {"TXT": ["_spf\\.pardot\\.com"]},
+    "website": "https://pardot.com"
+  },
+  "HubSpot Meetings": {
+    "cats": [77],
+    "scriptSrc": ["meetings\\.hubspot\\.com"],
+    "website": "https://hubspot.com"
+  },
+  "Typeform": {
+    "cats": [66],
+    "scriptSrc": ["embed\\.typeform\\.com", "typeform\\.com/to/"],
+    "website": "https://typeform.com"
+  },
+  "Loom": {
+    "cats": [14],
+    "scriptSrc": ["loom\\.com/embed"],
+    "website": "https://loom.com"
+  },
+  "Vidyard": {
+    "cats": [14],
+    "scriptSrc": ["play\\.vidyard\\.com", "vidyard\\.com/players"],
+    "website": "https://vidyard.com"
   }
 }

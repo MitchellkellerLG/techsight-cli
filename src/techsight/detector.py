@@ -375,6 +375,13 @@ _INLINE_SCRIPT_FINGERPRINTS: list[tuple[re.Pattern[str], str, int]] = [
     (re.compile(r'href=["\']https://calendly\.com/[^"\']{5,}["\']', re.I), "Calendly", 90),
     (re.compile(r"assets\.cal\.com/|cal\.com/embed", re.I), "Cal.com", 99),
     (re.compile(r'href=["\']https://app\.cal\.com/[^"\']{5,}["\']', re.I), "Cal.com", 90),
+    # Scheduling / video
+    (re.compile(r'href=["\']https://meetings\.hubspot\.com/[^"\']{3,}["\']', re.I), "HubSpot Meetings", 90),
+    (re.compile(r'href=["\']https://[^"\']*\.typeform\.com/to/[^"\']{3,}["\']', re.I), "Typeform", 90),
+    (re.compile(r'href=["\']https://form\.typeform\.com/to/[^"\']{3,}["\']', re.I), "Typeform", 90),
+    (re.compile(r'href=["\']https://www\.loom\.com/share/[^"\']{5,}["\']', re.I), "Loom", 90),
+    (re.compile(r'href=["\']https://share\.vidyard\.com/watch/[^"\']{5,}["\']', re.I), "Vidyard", 90),
+    (re.compile(r'href=["\']https://[^"\']+\.vidyard\.com/[^"\']{3,}["\']', re.I), "Vidyard", 85),
 ]
 
 

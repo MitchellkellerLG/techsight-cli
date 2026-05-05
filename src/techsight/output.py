@@ -185,7 +185,49 @@ def _group_detections(detections: list[Detection]) -> dict[str, list[str]]:
     return {k: v for k, v in sorted(groups.items())}
 
 
-def render_table(domain: str, detections: list[Detection], console: Console | None = None) -> None:
+_INTERESTING_PREFIXES = frozenset([
+    "app", "portal", "dashboard", "admin", "platform", "product",
+    "help", "support", "docs", "status",
+    "blog", "news", "content",
+    "shop", "store", "checkout",
+    "api", "dev", "staging", "sandbox",
+    "go", "link", "track", "email", "info", "mail", "send",
+    "careers", "jobs",
+    "community", "forum",
+    "login", "auth", "sso",
+    "marketing", "growth",
+])
+
+
+def _filter_subdomains(subdomains: list[str], root_domain: str) -> list[str]:
+    """Return interesting subdomain prefixes, stripping the root domain."""
+    seen: set[str] = set()
+    result: list[str] = []
+    root = root_domain.lower()
+    for sub in subdomains:
+        sub_lower = sub.lower()
+        # Strip root domain suffix to get the prefix
+        if sub_lower.endswith("." + root):
+            prefix = sub_lower[: -(len(root) + 1)]
+        elif sub_lower == root:
+            continue
+        else:
+            # Subdomain from a different domain (crt.sh sometimes includes these)
+            prefix = sub_lower.split(".")[0]
+        # Only keep leaf prefix (e.g. "app" from "app.company.com")
+        leaf = prefix.split(".")[0]
+        if leaf in _INTERESTING_PREFIXES and leaf not in seen:
+            seen.add(leaf)
+            result.append(leaf)
+    return sorted(result)
+
+
+def render_table(
+    domain: str,
+    detections: list[Detection],
+    console: Console | None = None,
+    subdomains: list[str] | None = None,
+) -> None:
     """Render detections as a Rich table to stderr."""
     c = console or Console(stderr=True)
     table = Table(title=f"TechSight: {domain}", show_lines=False)
@@ -207,12 +249,20 @@ def render_table(domain: str, detections: list[Detection], console: Console | No
     c.print(table)
     c.print(f"\n[dim]{len(detections)} technologies detected[/dim]")
 
+    if subdomains:
+        c.print(f"[dim]Subdomains: {', '.join(subdomains)}[/dim]")
 
-def render_json(domain: str, detections: list[Detection]) -> None:
+
+def render_json(
+    domain: str,
+    detections: list[Detection],
+    subdomains: list[str] | None = None,
+) -> None:
     """Render detections as JSON to stdout."""
-    result = {
+    result: dict[str, Any] = {
         "domain": domain,
         "count": len(detections),
+        "subdomains": subdomains or [],
         "stacks": _group_detections(detections),
         "technologies": [
             {
