@@ -277,6 +277,7 @@ _CNAME_RESOLVE_PREFIXES = frozenset([
     "help", "support", "go", "pages", "info", "blog", "chat", "app",
     "docs", "status", "community", "kb", "knowledge", "portal", "login",
     "mail", "email", "crm", "meetings", "book", "calendar",
+    "sfdc", "salesforce", "service", "community", "login",
 ])
 
 
@@ -301,6 +302,69 @@ async def _resolve_cnames_async(subdomains: list[str], max_lookups: int = 25) ->
 
     results = await asyncio.gather(*[_resolve_one(c) for c in candidates])
     return {sub: target for sub, target in results if target}
+
+
+# Vendor-hosted subdomain checks: resolve {slug}.{vendor_domain} via DNS.
+# If it resolves → confirmed use of that vendor. Zero false positives.
+#
+# IMPORTANT: Only include vendors where non-existent slugs return NXDOMAIN.
+# Vendors with wildcard DNS (e.g. Zendesk, Atlassian, Freshdesk, Freshservice,
+# Outseta) are intentionally excluded — they resolve any slug, producing false positives.
+# Verified safe: my.salesforce.com, lightning.force.com, service-now.com, hubspot.com
+_VENDOR_SPACE_CHECKS: list[tuple[str, str, int]] = [
+    ("{slug}.my.salesforce.com", "Salesforce", 99),
+    ("{slug}.lightning.force.com", "Salesforce", 99),
+    ("{slug}.hubspot.com", "HubSpot", 95),
+    ("{slug}.service-now.com", "ServiceNow", 99),
+]
+
+
+def _derive_slug(domain: str) -> str:
+    """Derive company slug from domain (e.g. 'acme.com' → 'acme', 'www.acme.com' → 'acme')."""
+    # Strip protocol if somehow present
+    domain = domain.split("://")[-1].split("/")[0]
+    parts = domain.split(".")
+    # 2 parts: 'acme.com' → parts[0] = 'acme'
+    # 3+ parts: 'www.acme.com' → parts[-2] = 'acme'
+    return parts[0] if len(parts) == 2 else parts[-2]
+
+
+async def _vendor_space_lookup_async(domain: str) -> list[tuple[str, str, int]]:
+    """Check vendor-hosted subdomains for this company.
+
+    Derives company slug from domain (e.g. 'acme.com' → 'acme'),
+    then checks if {slug}.vendor.com resolves. Returns list of
+    (tech_name, vector_label, confidence) tuples.
+    """
+    slug = _derive_slug(domain)
+    if not slug:
+        return []
+
+    resolver = dns.asyncresolver.Resolver()
+    resolver.timeout = 2
+    resolver.lifetime = 2
+
+    results: list[tuple[str, str, int]] = []
+
+    async def _check_one(template: str, tech_name: str, confidence: int) -> tuple[str, str, int] | None:
+        fqdn = template.replace("{slug}", slug)
+        try:
+            await resolver.resolve(fqdn, "A")
+            return tech_name, f"vendor-space:{fqdn}", confidence
+        except Exception:
+            pass
+        try:
+            await resolver.resolve(fqdn, "CNAME")
+            return tech_name, f"vendor-space:{fqdn}", confidence
+        except Exception:
+            return None
+
+    hits = await asyncio.gather(*[
+        _check_one(template, tech, conf)
+        for template, tech, conf in _VENDOR_SPACE_CHECKS
+    ])
+
+    return [h for h in hits if h is not None]
 
 
 async def _fetch_deep_pages_async(
@@ -408,6 +472,12 @@ async def _collect_async(
             evidence.cname_map = await _resolve_cnames_async(evidence.subdomains)
         except Exception:
             pass
+
+    # Phase 2b: vendor-space subdomain detection (always runs — fast, independent)
+    try:
+        evidence.vendor_hits = await _vendor_space_lookup_async(domain)
+    except Exception:
+        pass
 
     # Phase 3: deep page scanning — skip Cloudflare-protected (blocks subpages)
     cf_protected = bool(evidence.headers.get("cf-ray"))

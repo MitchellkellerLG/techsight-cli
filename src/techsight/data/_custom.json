@@ -199,5 +199,26 @@
     "cats": [14],
     "scriptSrc": ["play\\.vidyard\\.com", "vidyard\\.com/players"],
     "website": "https://vidyard.com"
+  },
+  "Atlassian": {
+    "cats": [22],
+    "dns": {"TXT": ["atlassian-domain-verification="]},
+    "website": "https://atlassian.com"
+  },
+  "Freshdesk": {
+    "cats": [13],
+    "website": "https://freshdesk.com"
+  },
+  "Freshservice": {
+    "cats": [13],
+    "website": "https://freshservice.com"
+  },
+  "ServiceNow": {
+    "cats": [22],
+    "website": "https://servicenow.com"
+  },
+  "Outseta": {
+    "cats": [32, 84],
+    "website": "https://outseta.com"
   }
 }

@@ -41,6 +41,9 @@ class Evidence:
     # robots.txt body
     robots_txt: str = ""
 
+    # Vendor-space subdomain hits (populated by collector)
+    vendor_hits: list[tuple[str, str, int]] = field(default_factory=list)
+
     # Error
     error: str | None = None
 
@@ -608,6 +611,7 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
     _inject_direct_hits(_match_subdomains_direct(evidence))
     _inject_direct_hits(_match_robots_direct(evidence))
     _inject_direct_hits(_match_inline_scripts_direct(evidence))
+    _inject_direct_hits(evidence.vendor_hits)
 
     detections.sort(key=lambda d: (-d.confidence, d.name))
     return detections
