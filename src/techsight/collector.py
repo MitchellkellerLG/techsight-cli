@@ -6,6 +6,7 @@ import asyncio
 import re
 import ssl
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import dns.asyncresolver
 import httpx
@@ -16,6 +17,20 @@ from techsight.detector import Evidence
 MAX_BODY_BYTES = 2 * 1024 * 1024  # 2MB
 HTTP_TIMEOUT = 15
 DNS_TIMEOUT = 5
+
+# Subdomain prefixes to brute-force via DNS — mirrors output._INTERESTING_PREFIXES
+_BRUTE_FORCE_PREFIXES = frozenset([
+    "app", "portal", "dashboard", "admin", "platform", "product",
+    "help", "support", "docs", "status",
+    "blog", "news", "content",
+    "shop", "store", "checkout",
+    "api", "dev", "staging", "sandbox",
+    "go", "link", "track", "email", "info", "mail", "send",
+    "careers", "jobs",
+    "community", "forum",
+    "login", "auth", "sso",
+    "marketing", "growth",
+])
 
 # Small pool for blocking cert fetches only
 _CERT_POOL = ThreadPoolExecutor(max_workers=10)
@@ -66,7 +81,6 @@ def _parse_internal_links(html: str, domain: str) -> list[str]:
                 seen.add(path)
                 paths.append(path)
         elif href.startswith(f"https://{domain}") or href.startswith(f"http://{domain}"):
-            from urllib.parse import urlparse
             parsed = urlparse(href)
             path = parsed.path.rstrip("/")
             if path and path not in seen:
@@ -141,31 +155,122 @@ async def _fetch_cert_issuer_async(domain: str) -> str:
     return await loop.run_in_executor(_CERT_POOL, _fetch_cert_issuer_sync, domain)
 
 
-async def _fetch_crt_sh_async(domain: str) -> list[str]:
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=12.0, write=5.0, pool=5.0),
-            follow_redirects=True,
-        ) as client:
+async def _dns_brute_force_async(domain: str) -> list[str]:
+    """Resolve common subdomain prefixes against DNS. Zero external dependency."""
+    resolver = dns.asyncresolver.Resolver()
+    resolver.timeout = 2
+    resolver.lifetime = 2
+
+    async def _resolve_one(prefix: str) -> str | None:
+        fqdn = f"{prefix}.{domain}"
+        try:
+            await resolver.resolve(fqdn, "A")
+            return fqdn
+        except Exception:
+            pass
+        try:
+            await resolver.resolve(fqdn, "CNAME")
+            return fqdn
+        except Exception:
+            return None
+
+    results = await asyncio.gather(*[_resolve_one(p) for p in _BRUTE_FORCE_PREFIXES])
+    return [r for r in results if r is not None]
+
+
+async def _fetch_subdomains_async(domain: str) -> list[str]:
+    """Multi-source subdomain fetch: crt.sh → HackerTarget → Wayback CDX.
+
+    Tries crt.sh first. Falls back to HackerTarget then Wayback CDX if crt.sh
+    returns fewer than 5 subdomains. Merges all results that were collected.
+    """
+    _THRESHOLD = 5
+    _TIMEOUT = httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0)
+
+    all_results: list[str] = []
+
+    async with httpx.AsyncClient(
+        timeout=_TIMEOUT,
+        follow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
+    ) as client:
+
+        # Source 1 — crt.sh
+        crt_results: list[str] = []
+        try:
             resp = await client.get(
                 "https://crt.sh/",
-                params={"q": f"%.{domain}", "output": "json", "limit": "200"},
+                params={"q": domain, "output": "json"},
                 headers={"Accept": "application/json"},
             )
-            if resp.status_code != 200:
-                return []
-            seen: set[str] = set()
-            subdomains: list[str] = []
-            for entry in resp.json():
-                for field in ("common_name", "name_value"):
-                    for name in entry.get(field, "").split("\n"):
-                        name = name.strip().lstrip("*.")
-                        if name and name not in seen and not name.startswith("@"):
-                            seen.add(name)
-                            subdomains.append(name)
-            return subdomains
-    except Exception:
-        return []
+            if resp.status_code == 200:
+                seen: set[str] = set()
+                for entry in resp.json():
+                    for field in ("common_name", "name_value"):
+                        for name in entry.get(field, "").split("\n"):
+                            name = name.strip().lstrip("*.")
+                            if name and name not in seen and not name.startswith("@"):
+                                seen.add(name)
+                                crt_results.append(name)
+        except Exception:
+            pass
+
+        all_results.extend(crt_results)
+        if len(crt_results) >= _THRESHOLD:
+            return all_results
+
+        # Source 2 — HackerTarget
+        ht_results: list[str] = []
+        try:
+            resp = await client.get(
+                "https://api.hackertarget.com/hostsearch/",
+                params={"q": domain},
+            )
+            if resp.status_code == 200:
+                for line in resp.text.splitlines():
+                    parts = line.split(",", 1)
+                    if parts:
+                        sub = parts[0].strip()
+                        if sub.endswith(f".{domain}") and sub != domain:
+                            ht_results.append(sub)
+        except Exception:
+            pass
+
+        all_results.extend(ht_results)
+        if len(ht_results) >= _THRESHOLD:
+            return list(dict.fromkeys(all_results))
+
+        # Source 3 — Wayback CDX
+        wb_results: list[str] = []
+        try:
+            resp = await client.get(
+                "http://web.archive.org/cdx/search/cdx",
+                params={
+                    "url": f"*.{domain}",
+                    "output": "json",
+                    "fl": "original",
+                    "collapse": "urlkey",
+                    "limit": "500",
+                },
+            )
+            if resp.status_code == 200:
+                rows = resp.json()
+                seen_wb: set[str] = set()
+                for row in rows[1:]:  # skip header row
+                    try:
+                        parsed = urlparse(row[0])
+                        host = parsed.hostname or ""
+                        if host.endswith(f".{domain}") and host not in seen_wb:
+                            seen_wb.add(host)
+                            wb_results.append(host)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        all_results.extend(wb_results)
+
+    return list(dict.fromkeys(all_results))
 
 
 _CNAME_RESOLVE_PREFIXES = frozenset([
@@ -260,8 +365,10 @@ async def _collect_async(
         coros.append(_fetch_cert_issuer_async(domain))
         slots.append("cert")
     if not skip_crt:
-        coros.append(_fetch_crt_sh_async(domain))
+        coros.append(_fetch_subdomains_async(domain))
         slots.append("crt")
+        coros.append(_dns_brute_force_async(domain))
+        slots.append("dns_brute")
 
     results = await asyncio.gather(*coros, return_exceptions=True)
     slot_map = dict(zip(slots, results))
@@ -286,8 +393,14 @@ async def _collect_async(
         evidence.cert_issuer = cert
 
     crt = slot_map.get("crt")
+    dns_brute = slot_map.get("dns_brute")
+    merged: list[str] = []
     if crt and not isinstance(crt, Exception):
-        evidence.subdomains = crt
+        merged.extend(crt)
+    if dns_brute and not isinstance(dns_brute, Exception):
+        merged.extend(dns_brute)
+    if merged:
+        evidence.subdomains = list(dict.fromkeys(merged))
 
     # Phase 2: CNAME resolution
     if evidence.subdomains and not skip_crt:
