@@ -13,24 +13,51 @@ import httpx
 
 from techsight.detector import Evidence
 
-
 MAX_BODY_BYTES = 2 * 1024 * 1024  # 2MB
 HTTP_TIMEOUT = 15
 DNS_TIMEOUT = 5
 
 # Subdomain prefixes to brute-force via DNS — mirrors output._INTERESTING_PREFIXES
-_BRUTE_FORCE_PREFIXES = frozenset([
-    "app", "portal", "dashboard", "admin", "platform", "product",
-    "help", "support", "docs", "status",
-    "blog", "news", "content",
-    "shop", "store", "checkout",
-    "api", "dev", "staging", "sandbox",
-    "go", "link", "track", "email", "info", "mail", "send",
-    "careers", "jobs",
-    "community", "forum",
-    "login", "auth", "sso",
-    "marketing", "growth",
-])
+_BRUTE_FORCE_PREFIXES = frozenset(
+    [
+        "app",
+        "portal",
+        "dashboard",
+        "admin",
+        "platform",
+        "product",
+        "help",
+        "support",
+        "docs",
+        "status",
+        "blog",
+        "news",
+        "content",
+        "shop",
+        "store",
+        "checkout",
+        "api",
+        "dev",
+        "staging",
+        "sandbox",
+        "go",
+        "link",
+        "track",
+        "email",
+        "info",
+        "mail",
+        "send",
+        "careers",
+        "jobs",
+        "community",
+        "forum",
+        "login",
+        "auth",
+        "sso",
+        "marketing",
+        "growth",
+    ]
+)
 
 # Small pool for blocking cert fetches only
 _CERT_POOL = ThreadPoolExecutor(max_workers=10)
@@ -184,17 +211,16 @@ async def _fetch_subdomains_async(domain: str) -> list[str]:
     Tries crt.sh first. Falls back to HackerTarget then Wayback CDX if crt.sh
     returns fewer than 5 subdomains. Merges all results that were collected.
     """
-    _THRESHOLD = 5
-    _TIMEOUT = httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0)
+    _threshold_len = 5
+    _timeout = httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0)
 
     all_results: list[str] = []
 
     async with httpx.AsyncClient(
-        timeout=_TIMEOUT,
+        timeout=_timeout,
         follow_redirects=True,
         headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
     ) as client:
-
         # Source 1 — crt.sh
         crt_results: list[str] = []
         try:
@@ -216,7 +242,7 @@ async def _fetch_subdomains_async(domain: str) -> list[str]:
             pass
 
         all_results.extend(crt_results)
-        if len(crt_results) >= _THRESHOLD:
+        if len(crt_results) >= _threshold_len:
             return all_results
 
         # Source 2 — HackerTarget
@@ -237,7 +263,7 @@ async def _fetch_subdomains_async(domain: str) -> list[str]:
             pass
 
         all_results.extend(ht_results)
-        if len(ht_results) >= _THRESHOLD:
+        if len(ht_results) >= _threshold_len:
             return list(dict.fromkeys(all_results))
 
         # Source 3 — Wayback CDX
@@ -273,12 +299,36 @@ async def _fetch_subdomains_async(domain: str) -> list[str]:
     return list(dict.fromkeys(all_results))
 
 
-_CNAME_RESOLVE_PREFIXES = frozenset([
-    "help", "support", "go", "pages", "info", "blog", "chat", "app",
-    "docs", "status", "community", "kb", "knowledge", "portal", "login",
-    "mail", "email", "crm", "meetings", "book", "calendar",
-    "sfdc", "salesforce", "service", "community", "login",
-])
+_CNAME_RESOLVE_PREFIXES = frozenset(
+    [
+        "help",
+        "support",
+        "go",
+        "pages",
+        "info",
+        "blog",
+        "chat",
+        "app",
+        "docs",
+        "status",
+        "community",
+        "kb",
+        "knowledge",
+        "portal",
+        "login",
+        "mail",
+        "email",
+        "crm",
+        "meetings",
+        "book",
+        "calendar",
+        "sfdc",
+        "salesforce",
+        "service",
+        "community",
+        "login",
+    ]
+)
 
 
 async def _resolve_cnames_async(subdomains: list[str], max_lookups: int = 25) -> dict[str, str]:
@@ -286,9 +336,9 @@ async def _resolve_cnames_async(subdomains: list[str], max_lookups: int = 25) ->
     resolver.timeout = 3
     resolver.lifetime = 3
 
-    candidates = [
-        s for s in subdomains if s.split(".")[0].lower() in _CNAME_RESOLVE_PREFIXES
-    ][:max_lookups]
+    candidates = [s for s in subdomains if s.split(".")[0].lower() in _CNAME_RESOLVE_PREFIXES][
+        :max_lookups
+    ]
 
     if not candidates:
         return {}
@@ -344,9 +394,9 @@ async def _vendor_space_lookup_async(domain: str) -> list[tuple[str, str, int]]:
     resolver.timeout = 2
     resolver.lifetime = 2
 
-    results: list[tuple[str, str, int]] = []
-
-    async def _check_one(template: str, tech_name: str, confidence: int) -> tuple[str, str, int] | None:
+    async def _check_one(
+        template: str, tech_name: str, confidence: int
+    ) -> tuple[str, str, int] | None:
         fqdn = template.replace("{slug}", slug)
         try:
             await resolver.resolve(fqdn, "A")
@@ -359,10 +409,9 @@ async def _vendor_space_lookup_async(domain: str) -> list[tuple[str, str, int]]:
         except Exception:
             return None
 
-    hits = await asyncio.gather(*[
-        _check_one(template, tech, conf)
-        for template, tech, conf in _VENDOR_SPACE_CHECKS
-    ])
+    hits = await asyncio.gather(
+        *[_check_one(template, tech, conf) for template, tech, conf in _VENDOR_SPACE_CHECKS]
+    )
 
     return [h for h in hits if h is not None]
 
@@ -377,13 +426,13 @@ async def _fetch_deep_pages_async(
     if not paths:
         return "", []
 
-    DEEP_TIMEOUT = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
+    deep_timeout = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
 
     async def _fetch_one(path: str) -> tuple[str, list[str]]:
         try:
             resp = await client.get(
                 f"https://{domain}{path}",
-                timeout=DEEP_TIMEOUT,
+                timeout=deep_timeout,
             )
             if resp.status_code < 400:
                 page_html = resp.text[:MAX_BODY_BYTES]
@@ -487,7 +536,9 @@ async def _collect_async(
             if extra_html:
                 evidence.html += "\n" + extra_html
             if extra_scripts:
-                evidence.script_sources = list(dict.fromkeys(evidence.script_sources + extra_scripts))
+                evidence.script_sources = list(
+                    dict.fromkeys(evidence.script_sources + extra_scripts)
+                )
         except Exception:
             pass
 
@@ -511,6 +562,7 @@ async def _collect_batch_async(
         headers={"User-Agent": "Mozilla/5.0 (compatible; TechSight/0.1)"},
         limits=httpx.Limits(max_connections=None, max_keepalive_connections=max_workers),
     ) as client:
+
         async def _bounded(domain: str) -> Evidence:
             async with sem:
                 return await _collect_async(domain, client, skip_dns, skip_cert, skip_crt, deep)
@@ -525,6 +577,7 @@ async def _collect_batch_async(
 
 # ── Public sync API — signatures unchanged, no callers need updating ──────────
 
+
 def collect(
     domain: str,
     skip_dns: bool = False,
@@ -533,6 +586,7 @@ def collect(
     deep: bool = False,
 ) -> Evidence:
     """Collect all evidence for a domain."""
+
     async def _run() -> Evidence:
         async with httpx.AsyncClient(
             verify=False,
