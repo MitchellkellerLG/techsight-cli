@@ -10,11 +10,19 @@ import click
 
 from techsight import __version__
 
-_MODE_HELP = "lite: homepage+DNS only, fast (~0.15s/domain). deep: all vectors + 10 subpages (~0.35s/domain)."
+_MODE_HELP = (
+    "lite: homepage+DNS only, fast (~0.15s/domain). "
+    "deep: all vectors + 10 subpages (~0.35s/domain)."
+)
 
 
-def _apply_mode(mode: str | None, skip_dns: bool, skip_cert: bool, skip_crt: bool, deep: bool) -> tuple[bool, bool, bool, bool]:
-    """Apply mode preset over individual skip flags. Returns (skip_dns, skip_cert, skip_crt, deep)."""
+def _apply_mode(
+    mode: str | None, skip_dns: bool, skip_cert: bool, skip_crt: bool, deep: bool
+) -> tuple[bool, bool, bool, bool]:
+    """Apply mode preset over individual skip flags.
+
+    Returns (skip_dns, skip_cert, skip_crt, deep).
+    """
     if mode == "lite":
         skip_crt = True
         skip_cert = True
@@ -40,7 +48,11 @@ def cli() -> None:
 @click.option("--skip-dns", is_flag=True, help="Skip DNS TXT lookups")
 @click.option("--skip-cert", is_flag=True, help="Skip TLS certificate check")
 @click.option("--skip-crt", is_flag=True, help="Skip crt.sh subdomain fingerprinting")
-@click.option("--deep", is_flag=True, help="Scan up to 10 internal subpages (finds GTM tools on /demo, /pricing, etc.)")
+@click.option(
+    "--deep",
+    is_flag=True,
+    help="Scan up to 10 internal subpages (finds GTM tools on /demo, /pricing, etc.)",
+)
 @click.option("--mode", type=click.Choice(["lite", "deep"]), default=None, help=_MODE_HELP)
 def scan(
     domain: str,
@@ -66,6 +78,7 @@ def scan(
     detections = detect(evidence, min_confidence=min_confidence)
 
     from techsight.output import _filter_subdomains
+
     interesting = _filter_subdomains(evidence.subdomains, domain)
 
     if json_output:
@@ -97,24 +110,33 @@ def batch(
     from techsight.output import category_name
 
     skip_dns, skip_cert, skip_crt, deep = _apply_mode(mode, False, False, skip_crt, deep)
-    evidences = collect_batch(list(domains), max_workers=max_workers, skip_dns=skip_dns, skip_cert=skip_cert, skip_crt=skip_crt, deep=deep)
+    evidences = collect_batch(
+        list(domains),
+        max_workers=max_workers,
+        skip_dns=skip_dns,
+        skip_cert=skip_cert,
+        skip_crt=skip_crt,
+        deep=deep,
+    )
 
     results = []
     for ev in evidences:
         detections = detect(ev, min_confidence=min_confidence)
-        results.append({
-            "domain": ev.domain,
-            "count": len(detections),
-            "technologies": [
-                {
-                    "name": d.name,
-                    "categories": [category_name(c) for c in d.category_ids],
-                    "confidence": d.confidence,
-                }
-                for d in detections
-            ],
-            "error": ev.error,
-        })
+        results.append(
+            {
+                "domain": ev.domain,
+                "count": len(detections),
+                "technologies": [
+                    {
+                        "name": d.name,
+                        "categories": [category_name(c) for c in d.category_ids],
+                        "confidence": d.confidence,
+                    }
+                    for d in detections
+                ],
+                "error": ev.error,
+            }
+        )
 
     json.dump(results, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -168,6 +190,7 @@ def enrich(
 def stats() -> None:
     """Show signature database statistics."""
     from collections import Counter
+
     from techsight.output import category_name
     from techsight.signatures import get_signatures
 
@@ -175,8 +198,14 @@ def stats() -> None:
     click.echo(f"Total signatures loaded: {len(sigs)}")
 
     vector_counts: dict[str, int] = {
-        "headers": 0, "cookies": 0, "meta": 0, "scriptSrc": 0,
-        "html": 0, "dns_txt": 0, "url": 0, "certIssuer": 0,
+        "headers": 0,
+        "cookies": 0,
+        "meta": 0,
+        "scriptSrc": 0,
+        "html": 0,
+        "dns_txt": 0,
+        "url": 0,
+        "certIssuer": 0,
     }
     cat_counts: Counter[str] = Counter()
 
@@ -204,7 +233,7 @@ def stats() -> None:
     for vec, count in sorted(vector_counts.items(), key=lambda x: -x[1]):
         click.echo(f"  {vec:15s} {count:5d} signatures")
 
-    click.echo(f"\nTop 15 categories:")
+    click.echo("\nTop 15 categories:")
     for cat, count in cat_counts.most_common(15):
         click.echo(f"  {cat:30s} {count:5d}")
 
@@ -212,8 +241,15 @@ def stats() -> None:
 @cli.command()
 @click.option("--input", "-i", "input_path", required=True, help="Input CSV file")
 @click.option("--sample", default=100, help="Number of domains to sample for benchmarking")
-@click.option("--workers", "workers_str", default="50,100,150,200", help="Comma-separated worker counts to test")
-@click.option("--modes", "modes_str", default="lite,deep", help="Comma-separated modes to test (lite, deep)")
+@click.option(
+    "--workers",
+    "workers_str",
+    default="50,100,150,200",
+    help="Comma-separated worker counts to test",
+)
+@click.option(
+    "--modes", "modes_str", default="lite,deep", help="Comma-separated modes to test (lite, deep)"
+)
 @click.option("--min-confidence", "-c", default=95, help="Minimum confidence threshold")
 def benchmark(
     input_path: str,
@@ -225,11 +261,13 @@ def benchmark(
     """Benchmark scan performance across modes and worker counts."""
     import csv
     from pathlib import Path
+
     from rich.console import Console
     from rich.table import Table
+
     from techsight.collector import collect_batch
     from techsight.detector import detect
-    from techsight.enricher import DOMAIN_COLUMNS, _find_column, _clean_domain
+    from techsight.enricher import DOMAIN_COLUMNS, _clean_domain, _find_column
 
     console = Console()
     inp = Path(input_path)
@@ -268,7 +306,11 @@ def benchmark(
         if len(domains) >= sample:
             break
 
-    console.print(f"[bold]Benchmarking {len(domains)} domains — {len(modes)} modes × {len(worker_counts)} worker counts[/bold]\n")
+    msg = (
+        f"[bold]Benchmarking {len(domains)} domains — "
+        f"{len(modes)} modes × {len(worker_counts)} worker counts[/bold]\n"
+    )
+    console.print(msg)
 
     table = Table(title="TechSight Benchmark Results", show_lines=True)
     table.add_column("Mode", style="cyan")

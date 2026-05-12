@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
 
 from techsight.signatures import TechSignature, get_signatures
 
@@ -312,7 +311,11 @@ _INLINE_SCRIPT_FINGERPRINTS: list[tuple[re.Pattern[str], str, int]] = [
     (re.compile(r"cdn\.popt\.in/pixel\.js", re.I), "Poptin", 95),
     (re.compile(r"ws\.zoominfo\.com/pixel", re.I), "ZoomInfo WebSights", 99),
     (re.compile(r"snap\.licdn\.com/li\.lms-analytics", re.I), "LinkedIn Insight Tag", 99),
-    (re.compile(r"snap\.licdn\.com/li\.lms-analytics|linkedin\.com/insight\.min\.js", re.I), "LinkedIn Insight Tag", 99),
+    (
+        re.compile(r"snap\.licdn\.com/li\.lms-analytics|linkedin\.com/insight\.min\.js", re.I),
+        "LinkedIn Insight Tag",
+        99,
+    ),
     (re.compile(r"static\.klaviyo\.com/onsite/js/klaviyo\.js", re.I), "Klaviyo", 99),
     (re.compile(r"window\._klOnsite\s*=", re.I), "Klaviyo", 95),
     (re.compile(r"js\.hsforms\.net/forms/embed", re.I), "HubSpot Forms", 95),
@@ -379,11 +382,23 @@ _INLINE_SCRIPT_FINGERPRINTS: list[tuple[re.Pattern[str], str, int]] = [
     (re.compile(r"assets\.cal\.com/|cal\.com/embed", re.I), "Cal.com", 99),
     (re.compile(r'href=["\']https://app\.cal\.com/[^"\']{5,}["\']', re.I), "Cal.com", 90),
     # Scheduling / video
-    (re.compile(r'href=["\']https://meetings\.hubspot\.com/[^"\']{3,}["\']', re.I), "HubSpot Meetings", 90),
-    (re.compile(r'href=["\']https://[^"\']*\.typeform\.com/to/[^"\']{3,}["\']', re.I), "Typeform", 90),
+    (
+        re.compile(r'href=["\']https://meetings\.hubspot\.com/[^"\']{3,}["\']', re.I),
+        "HubSpot Meetings",
+        90,
+    ),
+    (
+        re.compile(r'href=["\']https://[^"\']*\.typeform\.com/to/[^"\']{3,}["\']', re.I),
+        "Typeform",
+        90,
+    ),
     (re.compile(r'href=["\']https://form\.typeform\.com/to/[^"\']{3,}["\']', re.I), "Typeform", 90),
     (re.compile(r'href=["\']https://www\.loom\.com/share/[^"\']{5,}["\']', re.I), "Loom", 90),
-    (re.compile(r'href=["\']https://share\.vidyard\.com/watch/[^"\']{5,}["\']', re.I), "Vidyard", 90),
+    (
+        re.compile(r'href=["\']https://share\.vidyard\.com/watch/[^"\']{5,}["\']', re.I),
+        "Vidyard",
+        90,
+    ),
     (re.compile(r'href=["\']https://[^"\']+\.vidyard\.com/[^"\']{3,}["\']', re.I), "Vidyard", 85),
 ]
 
@@ -426,8 +441,8 @@ VECTOR_GROUP: dict[str, str] = {
     "header": "server",
     "cookie": "server",
     "cert": "server",
-    "dns": "dns",        # DNS is its own group — fully independent
-    "crt": "crt",        # crt.sh subdomains / CNAME resolution
+    "dns": "dns",  # DNS is its own group — fully independent
+    "crt": "crt",  # crt.sh subdomains / CNAME resolution
     "robots": "robots",  # robots.txt — independent page-level signal
     "inline": "inline",  # unique inline CDN URLs / JS init patterns (high-specificity)
     "scriptSrc": "page",
@@ -557,14 +572,16 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
         confidence = _calculate_confidence(unique_vectors)
         if confidence >= min_confidence:
             sig = tech_info[name]
-            detections.append(Detection(
-                name=name,
-                category_ids=sig.categories,
-                confidence=confidence,
-                vectors=unique_vectors,
-                website=sig.website,
-                description=sig.description,
-            ))
+            detections.append(
+                Detection(
+                    name=name,
+                    category_ids=sig.categories,
+                    confidence=confidence,
+                    vectors=unique_vectors,
+                    website=sig.website,
+                    description=sig.description,
+                )
+            )
             detected_names.add(name)
 
     # Resolve implications — if A is detected and implies B, add B
@@ -576,13 +593,15 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
                     # Strip confidence suffix from implies
                     clean_name = imp_name.split("\\;")[0]
                     if clean_name not in detected_names:
-                        implied.append(Detection(
-                            name=clean_name,
-                            category_ids=[],
-                            confidence=det.confidence,
-                            vectors=[f"implied_by:{det.name}"],
-                            implied_by=det.name,
-                        ))
+                        implied.append(
+                            Detection(
+                                name=clean_name,
+                                category_ids=[],
+                                confidence=det.confidence,
+                                vectors=[f"implied_by:{det.name}"],
+                                implied_by=det.name,
+                            )
+                        )
                         detected_names.add(clean_name)
                 break
 
@@ -593,12 +612,14 @@ def detect(evidence: Evidence, min_confidence: int = 95) -> list[Detection]:
     ) -> None:
         for tech_name, vector_label, hit_confidence in hits:
             if tech_name not in detected_names and hit_confidence >= min_confidence:
-                detections.append(Detection(
-                    name=tech_name,
-                    category_ids=[],
-                    confidence=hit_confidence,
-                    vectors=[vector_label],
-                ))
+                detections.append(
+                    Detection(
+                        name=tech_name,
+                        category_ids=[],
+                        confidence=hit_confidence,
+                        vectors=[vector_label],
+                    )
+                )
                 detected_names.add(tech_name)
             elif tech_name in detected_names:
                 for det in detections:

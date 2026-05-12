@@ -7,12 +7,11 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 
 from techsight.collector import collect_batch
 from techsight.detector import detect
 from techsight.output import detections_to_csv_value
-
 
 # Common domain column names (case-insensitive matching)
 DOMAIN_COLUMNS = {"domain", "website", "company domain", "url"}
@@ -32,7 +31,7 @@ def _clean_domain(raw: str) -> str:
     d = raw.strip().lower()
     for prefix in ("https://", "http://", "www."):
         if d.startswith(prefix):
-            d = d[len(prefix):]
+            d = d[len(prefix) :]
     return d.split("/")[0].strip()
 
 
@@ -123,7 +122,14 @@ def enrich_csv(
         chunk_size = max_workers * 2
         for start in range(0, len(unique_domains), chunk_size):
             chunk = unique_domains[start : start + chunk_size]
-            evidences = collect_batch(chunk, max_workers=max_workers, skip_dns=skip_dns, skip_cert=skip_cert, skip_crt=skip_crt, deep=deep)
+            evidences = collect_batch(
+                chunk,
+                max_workers=max_workers,
+                skip_dns=skip_dns,
+                skip_cert=skip_cert,
+                skip_crt=skip_crt,
+                deep=deep,
+            )
 
             for ev in evidences:
                 detections = detect(ev, min_confidence=min_confidence)

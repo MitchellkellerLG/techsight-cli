@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 DATA_DIR = Path(__file__).parent / "data"
 
 # Vectors we can match without a browser runtime
